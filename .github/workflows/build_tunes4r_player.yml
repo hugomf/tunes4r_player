@@ -11,7 +11,7 @@
 # Consumers can download the pre-built libs and drop them into the
 # tunes4r plugin's platform directories.
 
-name: Build tunes4r native libs
+name: Build tunes4r_player native libs
 
 on:
   push:
