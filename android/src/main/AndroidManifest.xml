@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.tunes4r_player.tunes4r_player">
+
+    <!-- Internet permission for HTTP streaming and YouTube -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

@@ -1,0 +1,132 @@
+# Build and release tunes4r Rust native libraries for all platforms.
+#
+# This workflow runs on macOS (needed for iOS/macOS cross-compilation)
+# and uses the Android NDK for Android builds.
+#
+# On push to main / release tag:
+#   1. Installs Rust targets
+#   2. Builds macOS .dylib, iOS .a, and Android .so libs
+#   3. Uploads all artifacts as a release asset
+#
+# Consumers can download the pre-built libs and drop them into the
+# tunes4r plugin's platform directories.
+
+name: Build tunes4r native libs
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Cross-compile Rust libs
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: >-
+            aarch64-apple-ios,aarch64-apple-ios-sim,
+            aarch64-apple-darwin,x86_64-apple-darwin,
+            aarch64-linux-android,armv7-linux-androideabi,
+            x86_64-linux-android,i686-linux-android
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Set NDK env
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "CC_aarch64_linux_android=aarch64-linux-android21-clang" >> $GITHUB_ENV
+          echo "CC_armv7_linux_androideabi=armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
+          echo "CC_x86_64_linux_android=x86_64-linux-android21-clang" >> $GITHUB_ENV
+          echo "CC_i686_linux_android=i686-linux-android21-clang" >> $GITHUB_ENV
+
+      - name: Build macOS
+        run: cargo build --release
+        working-directory: rust
+
+      - name: Build iOS
+        run: |
+          cargo rustc --target aarch64-apple-ios --release --crate-type staticlib
+          cargo rustc --target aarch64-apple-ios-sim --release --crate-type staticlib
+        working-directory: rust
+
+      - name: Build Android
+        run: |
+          for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+            cargo build --target "$target" --release || echo "Warning: $target failed"
+          done
+        working-directory: rust
+
+      - name: Create universal iOS binary (arm64 + simulator)
+        run: |
+          mkdir -p release/ios
+          cp rust/target/aarch64-apple-ios/release/libtunes4r.a release/ios/libtunes4r-device.a
+          cp rust/target/aarch64-apple-ios-sim/release/libtunes4r.a release/ios/libtunes4r-sim.a
+          # Single-arch for now; xcframework can be added later
+
+      - name: Copy macOS artifact
+        run: |
+          mkdir -p release/macos
+          cp rust/target/release/libtunes4r.dylib release/macos/
+          install_name_tool -id @rpath/libtunes4r.dylib release/macos/libtunes4r.dylib
+
+      - name: Copy Android artifacts
+        run: |
+          declare -A ABI_MAP
+          ABI_MAP[aarch64-linux-android]=arm64-v8a
+          ABI_MAP[armv7-linux-androideabi]=armeabi-v7a
+          ABI_MAP[x86_64-linux-android]=x86_64
+          ABI_MAP[i686-linux-android]=x86
+          for target in "${!ABI_MAP[@]}"; do
+            abi="${ABI_MAP[$target]}"
+            src="rust/target/$target/release/libtunes4r.so"
+            if [ -f "$src" ]; then
+              mkdir -p "release/android/$abi"
+              cp "$src" "release/android/$abi/"
+            fi
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tunes4r-native-libs
+          path: release/
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tunes4r-native-libs
+          path: tunes4r-native-libs
+
+      - name: Create tarball
+        run: tar czf tunes4r-native-libs.tar.gz tunes4r-native-libs/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tunes4r-native-libs.tar.gz
+          generate_release_notes: true

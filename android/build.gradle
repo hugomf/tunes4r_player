@@ -1,0 +1,60 @@
+// tunes4r Android plugin build
+//
+// Rust .so files should be placed in:
+//   src/main/jniLibs/arm64-v8a/libtunes4r.so
+//   src/main/jniLibs/armeabi-v7a/libtunes4r.so
+//   src/main/jniLibs/x86_64/libtunes4r.so
+//   src/main/jniLibs/x86/libtunes4r.so
+//
+// Build with: make build-android
+
+group 'com.tunes4r_player'
+version '0.1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.0'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'com.tunes4r_player.tunes4r_player'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 23
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    // Ensure libc++_shared.so is bundled if the Rust library depends on it
+    packagingOptions {
+        pickFirst 'lib/**/libc++_shared.so'
+    }
+}
+
+dependencies {
+    implementation 'androidx.annotation:annotation:1.9.1'
+}

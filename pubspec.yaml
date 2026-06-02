@@ -1,0 +1,22 @@
+name: tunes4r_player
+description: Rust-powered audio playback engine for Flutter. MP3, FLAC, AAC, Ogg, Opus, HTTP streaming, YouTube, and FFT spectrum analysis.
+version: 0.1.0
+homepage: https://github.com/hugomf/tunes4r_player
+
+environment:
+  sdk: ^3.11.0
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.3
+  path_provider: ^2.1.5
+  meta: ^1.16.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:

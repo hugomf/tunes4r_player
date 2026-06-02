@@ -1,0 +1,15 @@
+name: tunes4r_player_example
+description: Example app for the tunes4r_player audio engine plugin.
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  tunes4r_player:
+    path: ..
+
+flutter:
+  uses-material-design: true

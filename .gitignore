@@ -1,0 +1,14 @@
+.dart_tool/
+.packages
+.pub/
+build/
+*.iml
+.DS_Store
+
+# Native binaries built from CI or locally
+ios/Frameworks/libtunes4r.a
+macos/Frameworks/libtunes4r.dylib
+android/src/main/jniLibs/
+
+# Rust build artifacts
+rust/target/
