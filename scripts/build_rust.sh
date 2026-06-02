@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Cross-compile the Rust native library for iOS, Android, and macOS.
 #
 # Usage:
@@ -55,19 +55,39 @@ install_targets() {
 build_ios() {
   echo "=== Building for iOS ==="
   cd "$RUST_DIR"
-  cargo rustc --target aarch64-apple-ios --release --crate-type staticlib
-  cargo rustc --target aarch64-apple-ios-sim --release --crate-type staticlib
+
+  local profile="release"
+  [ "$BUILD_TYPE" = "debug" ] && profile="debug"
+
+  cargo rustc --target aarch64-apple-ios --"$profile" --crate-type staticlib
+  cargo rustc --target aarch64-apple-ios-sim --"$profile" --crate-type staticlib
+  cargo rustc --target x86_64-apple-ios --"$profile" --crate-type staticlib
+
   cd "$PLUGIN_DIR"
   mkdir -p ios/Frameworks
 
-  if [ "$BUILD_TYPE" = "debug" ]; then
-    cp "$RUST_DIR/target/aarch64-apple-ios-sim/release/libtunes4r.a" \
-       ios/Frameworks/libtunes4r.a
-  else
-    cp "$RUST_DIR/target/aarch64-apple-ios/release/libtunes4r.a" \
-       ios/Frameworks/libtunes4r.a
-  fi
-  echo "[iOS] Copied to ios/Frameworks/libtunes4r.a"
+  local device="$RUST_DIR/target/aarch64-apple-ios/$profile/libtunes4r.a"
+  local sim_arm="$RUST_DIR/target/aarch64-apple-ios-sim/$profile/libtunes4r.a"
+  local sim_x86="$RUST_DIR/target/x86_64-apple-ios/$profile/libtunes4r.a"
+
+  # Combine simulator archs into one fat lib, then create XCFramework with
+  # device + simulator slices so the pod works on all iOS targets.
+  local sim_fat="$(mktemp -u)_libtunes4r_sim.a"
+  lipo -create "$sim_arm" "$sim_x86" -output "$sim_fat"
+
+  rm -rf ios/Frameworks/libtunes4r.xcframework
+  xcodebuild -create-xcframework \
+    -library "$device" \
+    -library "$sim_fat" \
+    -output ios/Frameworks/libtunes4r.xcframework 2>/dev/null
+
+  rm -f "$sim_fat"
+
+  # Keep the raw .a as a convenience fallback (device only)
+  cp "$device" ios/Frameworks/libtunes4r.a
+
+  echo "[iOS] XCFramework created at ios/Frameworks/libtunes4r.xcframework"
+  echo "[iOS] Device-only .a at ios/Frameworks/libtunes4r.a"
 }
 
 build_macos() {
@@ -89,14 +109,28 @@ build_android() {
   if [ -z "${ANDROID_NDK_HOME:-}" ]; then
     if [ -d "$HOME/Library/Android/sdk/ndk" ]; then
       ANDROID_NDK_HOME=$(ls -d "$HOME/Library/Android/sdk/ndk"/*/ | sort -V | tail -1)
+      ANDROID_NDK_HOME="${ANDROID_NDK_HOME%/}"
     else
       echo "ERROR: ANDROID_NDK_HOME not set. Set it or install Android NDK."
       exit 1
     fi
   fi
 
+  export ANDROID_NDK_HOME
+
   NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
   export PATH="$NDK_TOOLCHAIN:$PATH"
+
+  # NDK 28+ dropped unversioned clang symlinks that cc-rs/cmake expect.
+  # Create them on demand: e.g. aarch64-linux-android-clang -> aarch64-linux-android21-clang
+  for f in "$NDK_TOOLCHAIN"/*-linux-android*-clang "$NDK_TOOLCHAIN"/*-linux-android*-clang++; do
+    [ -f "$f" ] || continue
+    base="${f%-clang*}"           # strip -clang or -clang++
+    base="${base%[0-9][0-9]}"    # strip trailing version suffix (e.g. 21)
+    if [ "$base" != "${f%-clang*}" ] && [ ! -f "$base-clang" ] && [ ! -f "$base-clang++" ]; then
+      ln -sf "$(basename "$f")" "$base-${f##*-}" 2>/dev/null || true
+    fi
+  done
 
   # Set CC/CXX for cross-compilation
   export CC_aarch64_linux_android="aarch64-linux-android21-clang"

@@ -235,7 +235,7 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.2"
-  tunes4r:
+  tunes4r_player:
     dependency: "direct main"
     description:
       path: ".."

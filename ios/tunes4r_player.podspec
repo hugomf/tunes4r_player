@@ -17,9 +17,8 @@ Pod::Spec.new do |s|
   s.platform         = :ios, '13.0'
   s.static_framework = true
 
-  # Vendored Rust static library (device arch only; use an XCFramework for
-  # simulator+device in release builds).
-  s.vendored_libraries = 'Frameworks/libtunes4r.a'
+  # XCFramework with device (arm64) + simulator (arm64/x86_64) slices.
+  s.vendored_frameworks = 'Frameworks/libtunes4r.xcframework'
 
   # Frameworks required by the Rust engine
   s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreAudio', 'Security', 'CoreFoundation'
@@ -27,6 +26,6 @@ Pod::Spec.new do |s|
   # Tell the linker to force-load the static lib so all extern "C" symbols
   # are visible to DynamicLibrary.process() from Dart.
   s.xcconfig = {
-    'OTHER_LDFLAGS' => '-force_load $(PODS_TARGET_SRCROOT)/ios/Frameworks/libtunes4r.a',
+    'OTHER_LDFLAGS' => '-force_load "${PODS_ROOT}/../.symlinks/plugins/tunes4r_player/ios/Frameworks/libtunes4r.a"',
   }
 end
