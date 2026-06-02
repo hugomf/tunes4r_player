@@ -237,24 +237,28 @@ class Tunes4rFFI {
     }
     if (Platform.isMacOS) {
       if (macOSBundlePath != null) {
+        debugPrint('[tunes4r] Loading from explicit path: $macOSBundlePath');
         return DynamicLibrary.open(macOSBundlePath);
       }
       final exe = Platform.resolvedExecutable;
-      final bundle = exe.replaceAll(
-        '/Contents/MacOS/',
-        '/Contents/Frameworks/libtunes4r.dylib',
-      );
+      final bundle = '${File(exe).parent.parent.parent.path}/Contents/Frameworks/libtunes4r.dylib';
+      debugPrint('[tunes4r] Trying bundle: $bundle');
       if (File(bundle).existsSync()) {
-        debugPrint('[tunes4r] Loading from bundle: $bundle');
+        debugPrint('[tunes4r] Loading from bundle');
         return DynamicLibrary.open(bundle);
       }
       final dev = '${Directory.current.path}/libtunes4r.dylib';
+      debugPrint('[tunes4r] Trying project root: $dev');
       if (File(dev).existsSync()) {
-        debugPrint('[tunes4r] Loading from dev path: $dev');
+        debugPrint('[tunes4r] Loading from project root');
         return DynamicLibrary.open(dev);
       }
-      throw const Tunes4rLoadException(
-        'libtunes4r.dylib not found. Build with: make build-macos',
+      throw Tunes4rLoadException(
+        'libtunes4r.dylib not found.\n'
+        'Tried:\n'
+        '  - $bundle\n'
+        '  - $dev\n'
+        'Build with: make build-macos',
       );
     }
     if (Platform.isLinux) {
