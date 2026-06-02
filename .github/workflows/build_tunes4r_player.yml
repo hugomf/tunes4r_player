@@ -99,13 +99,9 @@ jobs:
 
       - name: Copy Android artifacts
         run: |
-          declare -A ABI_MAP
-          ABI_MAP[aarch64-linux-android]=arm64-v8a
-          ABI_MAP[armv7-linux-androideabi]=armeabi-v7a
-          ABI_MAP[x86_64-linux-android]=x86_64
-          ABI_MAP[i686-linux-android]=x86
-          for target in "${!ABI_MAP[@]}"; do
-            abi="${ABI_MAP[$target]}"
+          for pair in "aarch64-linux-android:arm64-v8a" "armv7-linux-androideabi:armeabi-v7a" "x86_64-linux-android:x86_64" "i686-linux-android:x86"; do
+            target="${pair%%:*}"
+            abi="${pair#*:}"
             src="rust/target/$target/release/libtunes4r.so"
             if [ -f "$src" ]; then
               mkdir -p "release/android/$abi"
