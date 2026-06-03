@@ -13,3 +13,9 @@ android/src/main/jniLibs/
 
 # Rust build artifacts
 rust/target/
+
+# Gradle build artifacts
+android/.gradle/
+
+# macOS build artifacts
+macos/tunes4r_player/.build/
