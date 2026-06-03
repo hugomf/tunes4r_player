@@ -161,6 +161,11 @@ typedef _EnginePlayStreamWithDownloaderNative =
 typedef _EnginePlayStreamWithDownloaderDart =
     int Function(Pointer<Void>, Pointer<Utf8>);
 
+typedef _YoutubeDownloadAudioNative =
+    Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _YoutubeDownloadAudioDart =
+    int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
+
 // ---------------------------------------------------------------------------
 // Low-level FFI wrapper
 // ---------------------------------------------------------------------------
@@ -213,6 +218,7 @@ class Tunes4rFFI {
   late _YoutubeGetVideoInfoDart _youtubeGetVideoInfo;
   late _EnginePlayYoutubeDart _playYoutube;
   late _EnginePlayStreamWithDownloaderDart _playStreamWithDownloader;
+  late _YoutubeDownloadAudioDart _youtubeDownloadAudio;
 
   String? get initError => _initError;
   bool get isInitialized => _isInitialized;
@@ -416,6 +422,10 @@ class Tunes4rFFI {
         l.lookup<NativeFunction<_EnginePlayStreamWithDownloaderNative>>(
           'audio_engine_play_stream_with_downloader',
         ).asFunction();
+    _youtubeDownloadAudio =
+        l.lookup<NativeFunction<_YoutubeDownloadAudioNative>>(
+          'youtube_download_audio',
+        ).asFunction();
   }
 
   // ---------------------------------------------------------------------------
@@ -580,6 +590,21 @@ class Tunes4rFFI {
       return _playStreamWithDownloader(h, ptr);
     } finally {
       calloc.free(ptr);
+    }
+  }
+
+  int youtubeDownloadAudio(
+    Pointer<Void> h,
+    String videoId,
+    String outputPath,
+  ) {
+    final videoIdPtr = videoId.toNativeUtf8();
+    final outputPathPtr = outputPath.toNativeUtf8();
+    try {
+      return _youtubeDownloadAudio(h, videoIdPtr, outputPathPtr);
+    } finally {
+      calloc.free(videoIdPtr);
+      calloc.free(outputPathPtr);
     }
   }
 }
