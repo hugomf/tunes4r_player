@@ -141,6 +141,16 @@ typedef _YoutubeGetStreamUrlNative =
 typedef _YoutubeGetStreamUrlDart =
     Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
 
+typedef _YoutubeSearchNative =
+    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, Int32);
+typedef _YoutubeSearchDart =
+    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, int);
+
+typedef _YoutubeGetVideoInfoNative =
+    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
+typedef _YoutubeGetVideoInfoDart =
+    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
+
 typedef _EnginePlayYoutubeNative =
     Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
 typedef _EnginePlayYoutubeDart =
@@ -163,44 +173,46 @@ class Tunes4rFFI {
   DynamicLibrary get _libRef => _lib!;
 
   // Bound function references ------------------------------------------------
-  late final _EngineCreateDart _create;
-  late final _EngineDestroyDart _destroy;
-  late final _EnginePlayDart _play;
-  late final _EngineCanSeekDart _canSeek;
-  late final _EngineCanDownloadDart _canDownload;
-  late final _EnginePlayStreamFromBytesDart _playStreamFromBytes;
-  late final _EngineFetchAndPipeDart _fetchAndPipe;
-  late final _EnginePushAudioBytesDart _pushAudioBytes;
-  late final _EngineEndAudioStreamDart _endAudioStream;
-  late final _EngineSetStreamErrorDart _setStreamError;
-  late final _EnginePauseDart _pause;
-  late final _EngineResumeDart _resume;
-  late final _EngineStopDart _stop;
-  late final _EngineSeekDart _seek;
-  late final _EngineSetVolumeDart _setVolume;
-  late final _EngineGetVolumeDart _getVolume;
-  late final _EngineIsPlayingDart _isPlaying;
-  late final _EngineGetStateDart _getState;
-  late final _EngineGetPositionDart _getPosition;
-  late final _EngineGetSpectrumDart _getSpectrum;
-  late final _EngineGetSpectrumBandCountForEngineDart
+  late _EngineCreateDart _create;
+  late _EngineDestroyDart _destroy;
+  late _EnginePlayDart _play;
+  late _EngineCanSeekDart _canSeek;
+  late _EngineCanDownloadDart _canDownload;
+  late _EnginePlayStreamFromBytesDart _playStreamFromBytes;
+  late _EngineFetchAndPipeDart _fetchAndPipe;
+  late _EnginePushAudioBytesDart _pushAudioBytes;
+  late _EngineEndAudioStreamDart _endAudioStream;
+  late _EngineSetStreamErrorDart _setStreamError;
+  late _EnginePauseDart _pause;
+  late _EngineResumeDart _resume;
+  late _EngineStopDart _stop;
+  late _EngineSeekDart _seek;
+  late _EngineSetVolumeDart _setVolume;
+  late _EngineGetVolumeDart _getVolume;
+  late _EngineIsPlayingDart _isPlaying;
+  late _EngineGetStateDart _getState;
+  late _EngineGetPositionDart _getPosition;
+  late _EngineGetSpectrumDart _getSpectrum;
+  late _EngineGetSpectrumBandCountForEngineDart
       _getSpectrumBandCountForEngine;
-  late final _EngineSetSpectrumBandCountDart _setSpectrumBandCount;
-  late final _EngineSetSpectrumBandCountGlobalDart _setSpectrumBandCountGlobal;
-  late final _EngineGetBufferedPositionDart _getBufferedPosition;
-  late final _EngineGetSampleRateDart _getSampleRate;
-  late final _EngineGetChannelsDart _getChannels;
-  late final _EngineGetLoadErrorDart _getLoadError;
-  late final _EngineGetLastErrorDart _getLastError;
-  late final _EngineGetPipeSeekOffsetDart _getPipeSeekOffset;
-  late final _EnginePollPipeSeekByteOffsetDart _pollPipeSeekByteOffset;
-  late final _EngineClearPipeSeekRequestDart _clearPipeSeekRequest;
-  late final _EngineSetPipeTotalBytesDart _setPipeTotalBytes;
-  late final _YoutubeServiceCreateDart _youtubeServiceCreate;
-  late final _YoutubeServiceDestroyDart _youtubeServiceDestroy;
-  late final _YoutubeGetStreamUrlDart _youtubeGetStreamUrl;
-  late final _EnginePlayYoutubeDart _playYoutube;
-  late final _EnginePlayStreamWithDownloaderDart _playStreamWithDownloader;
+  late _EngineSetSpectrumBandCountDart _setSpectrumBandCount;
+  late _EngineSetSpectrumBandCountGlobalDart _setSpectrumBandCountGlobal;
+  late _EngineGetBufferedPositionDart _getBufferedPosition;
+  late _EngineGetSampleRateDart _getSampleRate;
+  late _EngineGetChannelsDart _getChannels;
+  late _EngineGetLoadErrorDart _getLoadError;
+  late _EngineGetLastErrorDart _getLastError;
+  late _EngineGetPipeSeekOffsetDart _getPipeSeekOffset;
+  late _EnginePollPipeSeekByteOffsetDart _pollPipeSeekByteOffset;
+  late _EngineClearPipeSeekRequestDart _clearPipeSeekRequest;
+  late _EngineSetPipeTotalBytesDart _setPipeTotalBytes;
+  late _YoutubeServiceCreateDart _youtubeServiceCreate;
+  late _YoutubeServiceDestroyDart _youtubeServiceDestroy;
+  late _YoutubeGetStreamUrlDart _youtubeGetStreamUrl;
+  late _YoutubeSearchDart _youtubeSearch;
+  late _YoutubeGetVideoInfoDart _youtubeGetVideoInfo;
+  late _EnginePlayYoutubeDart _playYoutube;
+  late _EnginePlayStreamWithDownloaderDart _playStreamWithDownloader;
 
   String? get initError => _initError;
   bool get isInitialized => _isInitialized;
@@ -390,6 +402,13 @@ class Tunes4rFFI {
         l.lookup<NativeFunction<_YoutubeGetStreamUrlNative>>(
           'youtube_get_stream_url',
         ).asFunction();
+    _youtubeSearch = l.lookup<NativeFunction<_YoutubeSearchNative>>(
+      'youtube_search',
+    ).asFunction();
+    _youtubeGetVideoInfo =
+        l.lookup<NativeFunction<_YoutubeGetVideoInfoNative>>(
+          'youtube_get_video_info',
+        ).asFunction();
     _playYoutube = l.lookup<NativeFunction<_EnginePlayYoutubeNative>>(
       'audio_engine_play_youtube',
     ).asFunction();
@@ -509,6 +528,32 @@ class Tunes4rFFI {
     final ptr = videoId.toNativeUtf8();
     try {
       final resultPtr = _youtubeGetStreamUrl(h, ptr);
+      if (resultPtr == nullptr) return null;
+      final s = resultPtr.toDartString();
+      calloc.free(resultPtr);
+      return s.isEmpty ? null : s;
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  String? youtubeSearch(Pointer<Void> h, String query, {int limit = 20}) {
+    final queryPtr = query.toNativeUtf8();
+    try {
+      final resultPtr = _youtubeSearch(h, queryPtr, limit);
+      if (resultPtr == nullptr) return null;
+      final s = resultPtr.toDartString();
+      calloc.free(resultPtr);
+      return s.isEmpty ? null : s;
+    } finally {
+      calloc.free(queryPtr);
+    }
+  }
+
+  String? youtubeGetVideoInfo(Pointer<Void> h, String videoId) {
+    final ptr = videoId.toNativeUtf8();
+    try {
+      final resultPtr = _youtubeGetVideoInfo(h, ptr);
       if (resultPtr == nullptr) return null;
       final s = resultPtr.toDartString();
       calloc.free(resultPtr);
