@@ -2,6 +2,7 @@
 
 use log::{debug, info, warn};
 
+use crate::audio::decoder::seek::seek_to_position;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use symphonia::core::codecs::audio::AudioCodecParameters;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
@@ -156,6 +158,24 @@ pub fn play_file_internal(
     let mut buffered = 0;
     let mut format = probed;
 
+    // --- SEEK LOGIC: must run BEFORE prebuffer so the queue is filled
+    // with samples starting at the seek target, not at time 0.
+    // Delegate to the unified seek module shared with macOS and Android.
+    let seek_pos_ms = _seek_target_ms.load(Ordering::Relaxed);
+    if seek_pos_ms > 0 {
+        info!("[file] Seek target: {} ms", seek_pos_ms);
+        if let Err(e) = seek_to_position(
+            &mut format,
+            &codec_params,
+            track_id,
+            seek_pos_ms,
+            &should_stop,
+        ) {
+            info!("[file] Seek failed: {}", e);
+        }
+        _seek_target_ms.store(0, Ordering::Relaxed);
+    }
+
     while buffered < target_buffer_samples {
         if should_stop.load(Ordering::Relaxed) {
             info!("[file] Stop requested during pre-buffering");
@@ -193,31 +213,6 @@ pub fn play_file_internal(
     }
 
     info!("[file] Pre-buffering complete: {} samples", buffered);
-
-    // Handle seek
-    let seek_pos_ms = _seek_target_ms.load(Ordering::Relaxed);
-    if seek_pos_ms > 0 {
-        info!("[file] Seek target: {} ms", seek_pos_ms);
-        let seek_samples = (seek_pos_ms as f64 / 1000.0 * sample_rate as f64) as u64;
-        let mut skipped: u64 = 0;
-        while skipped < seek_samples {
-            match format.next_packet() {
-                Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
-                    Ok(audio_buf) => {
-                        let mut samples: Vec<f32> = Vec::new();
-                        audio_buf.copy_to_vec_interleaved(&mut samples);
-                        skipped += samples.len() as u64;
-                    }
-                    Err(_) => continue,
-                },
-                Ok(Some(_)) => continue,
-                Ok(None) => break,
-                Err(_) => continue,
-            }
-        }
-        info!("[file] Seek complete: skipped {} samples", skipped);
-        _seek_target_ms.store(0, Ordering::Relaxed);
-    }
 
     let queue_clone = audio_queue.clone();
     let buffer_ready_clone = buffer_ready.clone();
@@ -488,28 +483,19 @@ pub fn play_stream_internal(
     let mut buffered_samples = 0;
     let mut format = probed;
 
-    // Handle seek for streams
+    // Handle seek for streams — delegate to the unified seek module.
     let seek_pos_ms = seek_target_ms.load(Ordering::Relaxed);
     if seek_pos_ms > 0 {
         debug!("[stream] Seek target: {} ms", seek_pos_ms);
-        let seek_samples = (seek_pos_ms as f64 / 1000.0 * sample_rate as f64) as u64;
-        let mut skipped: u64 = 0;
-        while skipped < seek_samples {
-            match format.next_packet() {
-                Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
-                    Ok(audio_buf) => {
-                        let mut samples: Vec<f32> = Vec::new();
-                        audio_buf.copy_to_vec_interleaved(&mut samples);
-                        skipped += samples.len() as u64;
-                    }
-                    Err(_) => continue,
-                },
-                Ok(Some(_)) => continue,
-                Ok(None) => break,
-                Err(_) => continue,
-            }
+        if let Err(e) = seek_to_position(
+            &mut format,
+            &codec_params,
+            track_id,
+            seek_pos_ms,
+            &should_stop,
+        ) {
+            debug!("[stream] Seek failed: {}", e);
         }
-        debug!("[stream] Seek complete: skipped {} samples", skipped);
         seek_target_ms.store(0, Ordering::Relaxed);
     }
 

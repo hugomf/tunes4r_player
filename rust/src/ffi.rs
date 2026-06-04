@@ -90,6 +90,10 @@ pub extern "C" fn __cxa_pure_virtual() {
 /// (see MainActivity.java static block). This initializes ndk_context so that
 /// background threads can later attach to the JVM — required by cpal's AAudio
 /// backend for creating audio output streams.
+///
+/// NOTE: When the library is loaded via Dart FFI (DynamicLibrary.open), this
+/// is NOT called. Use Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPlayerPlugin_nativeInit
+/// instead, which is invoked from the Flutter plugin's onAttachedToEngine.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std::ffi::c_void) -> i32 {
@@ -105,6 +109,44 @@ pub extern "C" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std::ffi
     );
     log::info!("[ffi] JNI_OnLoad: ndk_context initialized");
     jni::sys::JNI_VERSION_1_6
+}
+
+/// Called from Java Tunes4rPlayerPlugin.nativeInit() during Flutter plugin
+/// registration (onAttachedToEngine). This captures the JVM pointer via JNI
+/// and initializes ndk_context so that Rust background threads (like
+/// "playback-decode") can later attach to the JVM.
+///
+/// Fallback in case JNI_OnLoad wasn't triggered (library loaded via Dart FFI
+/// before class static initializer runs).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPlayerPlugin_nativeInit(
+    env: jni::sys::JNIEnv,
+    _class: jni::sys::JClass,
+) {
+    let funcs = *env;
+    if funcs.is_null() {
+        return;
+    }
+    match (*funcs).GetJavaVM {
+        Some(func) => {
+            let mut vm_ptr: *mut jni::sys::JavaVM = std::ptr::null_mut();
+            let result = func(env, &mut vm_ptr as *mut *mut jni::sys::JavaVM);
+            if result == 0 && !vm_ptr.is_null() {
+                ndk_context::initialize_android_context(
+                    vm_ptr as *mut std::ffi::c_void,
+                    std::ptr::null_mut(),
+                );
+                android_logger::init_once(
+                    android_logger::Config::default()
+                        .with_max_level(log::LevelFilter::Debug)
+                        .with_tag("tunes4r"),
+                );
+                log::info!("[ffi] ndk_context initialized via nativeInit");
+            }
+        }
+        None => {}
+    }
 }
 
 /// Opaque handle to the audio engine

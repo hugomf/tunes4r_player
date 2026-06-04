@@ -10,7 +10,9 @@
 #
 # After building, artifacts are copied into the plugin's platform directories:
 #   ios/Frameworks/libtunes4r.a
+#   ios/Frameworks/libtunes4r.xcframework
 #   macos/Frameworks/libtunes4r.dylib
+#   macos/Frameworks/libtunes4r.xcframework   (consumed by SPM and CocoaPods)
 #   android/src/main/jniLibs/<abi>/libtunes4r.so
 #
 # Prerequisites:
@@ -92,14 +94,106 @@ build_ios() {
 
 build_macos() {
   echo "=== Building for macOS ==="
+
+  local profile="release"
+  [ "$BUILD_TYPE" = "debug" ] && profile="debug"
+
+  # Ensure both Apple targets are available so the XCFramework is universal
+  # (arm64 for Apple Silicon, x86_64 for Intel).
+  rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null 2>&1 || true
+
   cd "$RUST_DIR"
-  cargo build --release
+  cargo build --target aarch64-apple-darwin --"$profile"
+  cargo build --target x86_64-apple-darwin  --"$profile"
   cd "$PLUGIN_DIR"
-  mkdir -p macos/Frameworks
-  cp "$RUST_DIR/target/release/libtunes4r.dylib" macos/Frameworks/
-  install_name_tool -id @rpath/libtunes4r.dylib \
-    macos/Frameworks/libtunes4r.dylib
-  echo "[macOS] Copied to macos/Frameworks/libtunes4r.dylib"
+
+  local arm_lib="$RUST_DIR/target/aarch64-apple-darwin/$profile/libtunes4r.dylib"
+  local x86_lib="$RUST_DIR/target/x86_64-apple-darwin/$profile/libtunes4r.dylib"
+  local out_dir="macos/Frameworks"
+
+  if [ ! -f "$arm_lib" ] || [ ! -f "$x86_lib" ]; then
+    echo "ERROR: missing built dylib(s) for macOS XCFramework"
+    echo "  arm64: $arm_lib"
+    echo "  x86_64: $x86_lib"
+    exit 1
+  fi
+
+  mkdir -p "$out_dir"
+
+  # 1) Build a universal XCFramework that Swift Package Manager and CocoaPods
+  #    can both consume as a binaryTarget / vendored_framework.
+  rm -rf "$out_dir/libtunes4r.xcframework"
+
+  # xcodebuild can take a flat dylib directly via -library; the iOS build
+  # already uses this for the .a staticlib slices, so do the same for macOS.
+  if ! xcodebuild -create-xcframework \
+        -library "$arm_lib" \
+        -library "$x86_lib" \
+        -output "$out_dir/libtunes4r.xcframework" >/dev/null 2>&1; then
+    echo "ERROR: xcodebuild -create-xcframework failed; re-running with output"
+    xcodebuild -create-xcframework \
+        -library "$arm_lib" \
+        -library "$x86_lib" \
+        -output "$out_dir/libtunes4r.xcframework"
+    exit 1
+  fi
+
+  # 2) Also drop a flat dylib for any tooling that loads it without an
+  #    .framework wrapper (raw `DynamicLibrary.open('libtunes4r.dylib')`).
+  cp "$arm_lib" "$out_dir/libtunes4r.dylib"
+  install_name_tool -id "@rpath/libtunes4r.dylib" "$out_dir/libtunes4r.dylib"
+
+  echo "[macOS] XCFramework at $out_dir/libtunes4r.xcframework (arm64 + x86_64)"
+  echo "[macOS] Flat dylib at $out_dir/libtunes4r.dylib"
+}
+
+# Build a minimal macOS .framework bundle from a dylib. xcodebuild
+# -create-xcframework requires Resources/Info.plist + the standard
+# Versions/{A,Current} symlink layout.
+#
+# $1 = source dylib
+# $2 = target framework directory
+# $3 = arch tag used in CFBundleIdentifier (so xcodebuild treats the
+#      arm64 and x86_64 wrappers as distinct input libraries)
+_make_framework() {
+  local dylib="$1"
+  local fw="$2"
+  local arch_tag="$3"
+
+  mkdir -p "$fw/Versions/A/Resources"
+
+  cat > "$fw/Versions/A/Resources/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>libtunes4r</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.tunes4r.libtunes4r.${arch_tag}</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>libtunes4r</string>
+    <key>CFBundlePackageType</key>
+    <string>FMWK</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>
+PLIST
+
+  cp "$dylib" "$fw/Versions/A/libtunes4r"
+  install_name_tool -id "@rpath/libtunes4r.framework/libtunes4r" \
+    "$fw/Versions/A/libtunes4r"
+
+  ln -snf "A" "$fw/Versions/Current"
+  ln -snf "Versions/Current/libtunes4r" "$fw/libtunes4r"
+  ln -snf "Versions/Current/Resources"  "$fw/Resources"
 }
 
 build_android() {

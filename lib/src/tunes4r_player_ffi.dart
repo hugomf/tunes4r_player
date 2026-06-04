@@ -259,12 +259,33 @@ class Tunes4rFFI {
         return DynamicLibrary.open(macOSBundlePath);
       }
       final exe = Platform.resolvedExecutable;
-      final bundle = '${File(exe).parent.parent.parent.path}/Contents/Frameworks/libtunes4r.dylib';
-      debugPrint('[tunes4r] Trying bundle: $bundle');
-      if (File(bundle).existsSync()) {
-        debugPrint('[tunes4r] Loading from bundle');
-        return DynamicLibrary.open(bundle);
+      final frameworksDir = '${File(exe).parent.parent.parent.path}/Contents/Frameworks';
+
+      // Flutter's macOS plugin integration (CocoaPods vendored_libraries
+      // and Swift Package Manager binary targets) wraps the dylib inside a
+      // `libtunes4r.framework` bundle instead of dropping a flat dylib in
+      // Contents/Frameworks. Try the framework locations first, then fall
+      // back to the flat dylib for direct `flutter run`/CLI workflows.
+      final frameworkCandidates = <String>[
+        '$frameworksDir/libtunes4r.framework/Versions/A/libtunes4r',
+        '$frameworksDir/libtunes4r.framework/Versions/Current/libtunes4r',
+        '$frameworksDir/libtunes4r.framework/libtunes4r',
+      ];
+      for (final p in frameworkCandidates) {
+        debugPrint('[tunes4r] Trying framework: $p');
+        if (File(p).existsSync()) {
+          debugPrint('[tunes4r] Loading from framework');
+          return DynamicLibrary.open(p);
+        }
       }
+
+      final flatDylib = '$frameworksDir/libtunes4r.dylib';
+      debugPrint('[tunes4r] Trying flat dylib: $flatDylib');
+      if (File(flatDylib).existsSync()) {
+        debugPrint('[tunes4r] Loading from flat dylib');
+        return DynamicLibrary.open(flatDylib);
+      }
+
       final dev = '${Directory.current.path}/libtunes4r.dylib';
       debugPrint('[tunes4r] Trying project root: $dev');
       if (File(dev).existsSync()) {
@@ -274,7 +295,8 @@ class Tunes4rFFI {
       throw Tunes4rLoadException(
         'libtunes4r.dylib not found.\n'
         'Tried:\n'
-        '  - $bundle\n'
+        '  - ${frameworkCandidates.join('\n  - ')}\n'
+        '  - $flatDylib\n'
         '  - $dev\n'
         'Build with: make build-macos',
       );

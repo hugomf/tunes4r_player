@@ -19,7 +19,17 @@ pub struct QueueSource {
 
 impl Source for QueueSource {
     fn current_span_len(&self) -> Option<usize> {
-        self.queue.lock().len().into()
+        // rodio 0.22 treats `Some(0)` as "source exhausted" (see
+        // `Source::is_exhausted` in rodio/src/source/mod.rs). For a dynamic
+        // streaming queue we must only report `Some(0)` once the producer is
+        // truly done; otherwise a momentarily empty queue would cause rodio's
+        // mixer to permanently detach this source mid-playback.
+        let len = self.queue.lock().len();
+        if len == 0 && self.done.load(Ordering::Acquire) {
+            Some(0)
+        } else {
+            None
+        }
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -242,5 +252,169 @@ mod tests {
                 i
             );
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Regression tests for the Android "playback stops after ~30s" bug.
+    //
+    // Root cause: rodio 0.22's `Source::is_exhausted()` is defined as
+    // `current_span_len() == Some(0)` (rodio/src/source/mod.rs:187), and
+    // `UniformSourceIterator::bootstrap` wraps the source in
+    // `Take { n: span_len.map(|x| x.min(32768)) }` (uniform.rs:54-56).
+    //
+    // If `current_span_len()` returns `Some(0)` while the queue is merely
+    // momentarily empty (producer still feeding), rodio's mixer permanently
+    // detaches the source mid-stream and closes AAudio.
+    //
+    // The contract we must uphold for ALL streaming queue sources:
+    //   - `Some(0)`  ⇔  producer marked done AND queue empty (truly exhausted)
+    //   - `None`     ⇔  more samples may arrive; do not detach
+    //   - Anything else: never report `Some(0)` for a "drainable but live" queue.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// The original 30s bug: an empty queue without `done` MUST NOT report
+    /// `Some(0)`, otherwise rodio considers the source exhausted and removes it.
+    #[test]
+    fn test_current_span_len_empty_queue_not_done_is_none() {
+        let (_, source, _) = make_source();
+        assert_eq!(
+            source.current_span_len(),
+            None,
+            "empty live queue must report None, never Some(0) — \
+             returning Some(0) here is what caused Android playback to die at ~30s"
+        );
+    }
+
+    /// `Some(0)` is reserved exclusively for the genuinely-exhausted state.
+    #[test]
+    fn test_current_span_len_empty_queue_done_is_some_zero() {
+        let (_, source, _) = make_source();
+        source.mark_done();
+        assert_eq!(
+            source.current_span_len(),
+            Some(0),
+            "queue empty AND producer done should report Some(0) (truly exhausted)"
+        );
+    }
+
+    /// A non-empty queue is always "alive" — span length is unknown ahead of time.
+    #[test]
+    fn test_current_span_len_with_samples_is_none() {
+        let (buffer, source, _) = make_source();
+        buffer.lock().extend([0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(
+            source.current_span_len(),
+            None,
+            "a streaming queue has no predetermined span length"
+        );
+    }
+
+    /// Even when the producer has marked done, as long as samples remain
+    /// queued we are NOT exhausted yet — the consumer must be allowed to drain.
+    #[test]
+    fn test_current_span_len_done_but_queue_not_empty_is_none() {
+        let (buffer, source, _) = make_source();
+        buffer.lock().extend([1.0, 2.0]);
+        source.mark_done();
+        assert_eq!(
+            source.current_span_len(),
+            None,
+            "done + non-empty queue means draining, not exhausted"
+        );
+    }
+
+    /// Direct check of rodio's `Source::is_exhausted()` (which is what the
+    /// mixer/uniform-source-iterator actually consult). This is the precise
+    /// behavior that broke Android: a transient empty queue must not be
+    /// reported as exhausted.
+    #[test]
+    fn test_is_exhausted_contract_for_rodio_mixer() {
+        let (buffer, source, _) = make_source();
+
+        // 1. Brand new, empty, live → not exhausted.
+        assert!(
+            !source.is_exhausted(),
+            "live empty queue must not be is_exhausted() — would kill source in rodio mixer"
+        );
+
+        // 2. Samples arrive → still not exhausted.
+        buffer.lock().extend([1.0; 8]);
+        assert!(!source.is_exhausted(), "queue with samples is not exhausted");
+
+        // 3. Producer done, samples still buffered → still not exhausted (draining).
+        source.mark_done();
+        assert!(
+            !source.is_exhausted(),
+            "done flag while draining must not flip is_exhausted() to true"
+        );
+
+        // 4. Consumer drains the buffer → only NOW exhausted.
+        buffer.lock().clear();
+        assert!(
+            source.is_exhausted(),
+            "queue empty + done must finally report exhausted"
+        );
+    }
+
+    /// Simulates the rodio `UniformSourceIterator::bootstrap` pattern:
+    ///     `let span_len = input.current_span_len().map(|x| x.min(32768));`
+    ///     `Take { iter: input, n: span_len }`
+    /// With the old buggy impl returning `Some(0)`, `Take.n` was `Some(0)` and
+    /// Take immediately yielded `None`, which made the mixer remove the source.
+    /// The fix returns `None`, which makes `Take` unbounded (`n = None`).
+    #[test]
+    fn test_uniform_source_bootstrap_does_not_get_take_zero() {
+        let (_, source, _) = make_source();
+
+        // Mirrors rodio's bootstrap math exactly.
+        let span_len = source.current_span_len().map(|x| x.min(32768));
+
+        assert_ne!(
+            span_len,
+            Some(0),
+            "rodio's UniformSourceIterator::bootstrap would build `Take {{ n: Some(0) }}` \
+             from this, immediately yielding None and causing the mixer to detach the source. \
+             This is the exact mechanism behind the Android 30s playback cutoff."
+        );
+        assert_eq!(
+            span_len, None,
+            "for a live streaming queue, bootstrap should see an unbounded Take (n = None)"
+        );
+    }
+
+    /// End-to-end simulation of a producer that pauses/catches up while the
+    /// consumer is draining. The consumer must NEVER see a state where the
+    /// source declares itself exhausted (`is_exhausted()` true) while the
+    /// producer is still going to push more data.
+    ///
+    /// This mirrors what happens on Android: the synchronous decoder fills
+    /// the queue in bursts; the player drains at real-time rate; occasionally
+    /// the queue is empty for a moment between bursts.
+    #[test]
+    fn test_streaming_burst_pattern_never_reports_exhausted() {
+        let (buffer, source, _) = make_source();
+
+        // Burst 1: producer writes, consumer drains fully.
+        buffer.lock().extend([1.0, 2.0, 3.0, 4.0]);
+        assert!(!source.is_exhausted());
+        buffer.lock().clear(); // consumer drained
+        assert!(
+            !source.is_exhausted(),
+            "queue empty between producer bursts must not report exhausted"
+        );
+
+        // Burst 2: producer writes more (this is exactly the moment that was
+        // broken — rodio had already detached the source by now).
+        buffer.lock().extend([5.0, 6.0, 7.0]);
+        assert!(!source.is_exhausted());
+
+        // Final burst + done.
+        buffer.lock().extend([8.0, 9.0]);
+        source.mark_done();
+        assert!(!source.is_exhausted(), "still draining after done");
+
+        // Consumer finishes the buffer → only now exhausted.
+        buffer.lock().clear();
+        assert!(source.is_exhausted(), "done + drained should be exhausted");
     }
 }

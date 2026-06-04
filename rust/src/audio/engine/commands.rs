@@ -64,6 +64,9 @@ impl PlaybackEngine {
         let file_path_for_android = uri_for_playback.clone();
         #[cfg(target_os = "android")]
         let source_kind_for_android = kind;
+        #[cfg(not(target_os = "android"))]
+        let file_path_for_thread = uri_for_playback.clone();
+        let source_kind = kind;
         self.playback_type = Some(match kind {
             crate::audio::stream::source::SourceKind::File => {
                 PlaybackType::File { path: uri_for_playback }
@@ -103,19 +106,38 @@ impl PlaybackEngine {
             .name("playback-decode".into())
             .spawn(move || {
                 #[cfg(not(target_os = "android"))]
-                crate::audio::stream::handling::decode_and_play_from_read(
-                    reader,
-                    audio_queue,
-                    buffer_ready,
-                    is_playing_flag,
-                    should_stop,
-                    samples_played,
-                    sample_rate,
-                    channels,
-                    total_duration_ms,
-                    load_error,
-                    seek_target_ms,
-                );
+                match source_kind {
+                    crate::audio::stream::source::SourceKind::File => {
+                        crate::audio::decoder::file_decoder::play_file_internal(
+                            file_path_for_thread,
+                            audio_queue,
+                            buffer_ready,
+                            is_playing_flag,
+                            should_stop,
+                            samples_played,
+                            sample_rate,
+                            channels,
+                            total_duration_ms,
+                            load_error,
+                            seek_target_ms,
+                        );
+                    }
+                    _ => {
+                        crate::audio::stream::handling::decode_and_play_from_read(
+                            reader,
+                            audio_queue,
+                            buffer_ready,
+                            is_playing_flag,
+                            should_stop,
+                            samples_played,
+                            sample_rate,
+                            channels,
+                            total_duration_ms,
+                            load_error,
+                            seek_target_ms,
+                        );
+                    }
+                }
                 #[cfg(target_os = "android")]
                 match source_kind_for_android {
                     crate::audio::stream::source::SourceKind::File => {

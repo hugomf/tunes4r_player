@@ -25,5 +25,10 @@ public final class GeneratedPluginRegistrant {
     } catch (Exception e) {
       Log.e(TAG, "Error registering plugin jni_flutter, com.github.dart_lang.jni_flutter.JniFlutterPlugin", e);
     }
+    try {
+      flutterEngine.getPlugins().add(new com.tunes4r_player.tunes4r_player.Tunes4rPlayerPlugin());
+    } catch (Exception e) {
+      Log.e(TAG, "Error registering plugin tunes4r_player, com.tunes4r_player.tunes4r_player.Tunes4rPlayerPlugin", e);
+    }
   }
 }

@@ -27,4 +27,5 @@ flutter:
       ios:
         ffiPlugin: true
       android:
-        ffiPlugin: true
+        package: com.tunes4r_player.tunes4r_player
+        pluginClass: Tunes4rPlayerPlugin

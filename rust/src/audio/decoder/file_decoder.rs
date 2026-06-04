@@ -2,9 +2,11 @@
 
 use log::info;
 
+use crate::audio::decoder::seek::seek_to_position;
 use crate::audio::engine::{get_band_count, update_global_spectrum};
+use crate::audio::stream::cpal_source::{build_output_stream, pick_output_config};
 use crate::dsp::RmsSpectrumAnalyzer;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -45,81 +47,6 @@ pub fn extract_duration(
     }
 
     duration_ms
-}
-
-/// Skip packets until the desired time position is reached.
-/// Returns the number of samples skipped.
-fn fast_forward_to_position(
-    format: &mut Box<dyn FormatReader>,
-    codec_params: &symphonia::core::codecs::audio::AudioCodecParameters,
-    track_id: u32,
-    target_ms: u64,
-    should_stop: &Arc<AtomicBool>,
-) -> u64 {
-    let sample_rate = codec_params.sample_rate.unwrap_or(44100) as f64;
-    let channels = codec_params
-        .channels
-        .as_ref()
-        .map(|c| c.count())
-        .unwrap_or(2);
-
-    let target_samples = (target_ms as f64 / 1000.0 * sample_rate) as u64;
-    let mut skipped_samples: u64 = 0;
-
-    let mut registry = CodecRegistry::new();
-    registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();
-    registry.register_audio_decoder::<symphonia_codec_aac::AacDecoder>();
-    registry.register_audio_decoder::<symphonia_codec_vorbis::VorbisDecoder>();
-    registry.register_audio_decoder::<symphonia_bundle_flac::FlacDecoder>();
-    registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
-    let mut seek_decoder =
-        match registry.make_audio_decoder(codec_params, &AudioDecoderOptions::default()) {
-            Ok(d) => d,
-            Err(_) => return 0,
-        };
-
-    loop {
-        if should_stop.load(Ordering::Relaxed) {
-            return skipped_samples;
-        }
-
-        let packet = match format.next_packet() {
-            Ok(Some(p)) => p,
-            Ok(None) => break,
-            Err(e) => {
-                info!("[file] Packet error during seek fast-forward: {}", e);
-                thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-        };
-
-        if packet.track_id != track_id {
-            continue;
-        }
-
-        match seek_decoder.decode(&packet) {
-            Ok(audio_buf) => {
-                skipped_samples += audio_buf.frames() as u64;
-                if skipped_samples >= target_samples {
-                    info!(
-                        "[file] Seek fast-forward complete: skipped {} samples (target: {})",
-                        skipped_samples, target_samples
-                    );
-                    break;
-                }
-            }
-            Err(e) => {
-                info!("[file] Decode error during seek fast-forward: {}", e);
-            }
-        }
-    }
-
-    if skipped_samples > 0 && channels > 0 {
-        let estimated_ms = (skipped_samples * 1000) / (channels as u64 * sample_rate as u64);
-        info!("[file] Estimated seek position: ~{} ms", estimated_ms);
-    }
-
-    skipped_samples
 }
 
 pub fn play_file_internal(
@@ -208,23 +135,18 @@ pub fn play_file_internal(
     channels_out.store(channels as u64, Ordering::Relaxed);
     total_duration_ms.store(duration_ms, Ordering::Relaxed);
 
-    // --- SEEK LOGIC: fast-forward to target position ---
+    // --- SEEK LOGIC: delegate to unified seek module ---
     let seek_pos_ms = seek_target_ms.load(Ordering::Relaxed);
     if seek_pos_ms > 0 {
         info!("[file] Seek target: {} ms", seek_pos_ms);
-
-        // Try symphonia's native seek first (faster and more accurate)
-        let seek_used_native = false; // Disabled for now - symphonia 0.6 seek API is format-specific
-
-        if !seek_used_native {
-            info!("[file] Fast-forwarding through packets to seek...");
-            fast_forward_to_position(
-                &mut format,
-                &codec_params,
-                track_id,
-                seek_pos_ms,
-                &should_stop,
-            );
+        if let Err(e) = seek_to_position(
+            &mut format,
+            &codec_params,
+            track_id,
+            seek_pos_ms,
+            &should_stop,
+        ) {
+            info!("[file] Seek failed: {}", e);
         }
     }
 
@@ -239,16 +161,14 @@ pub fn play_file_internal(
         }
     };
 
-    let config = match device
-        .supported_output_configs()
-        .expect("No configs")
-        .find(|c| c.min_sample_rate() <= sample_rate && c.max_sample_rate() >= sample_rate)
-    {
-        Some(c) => c.with_sample_rate(sample_rate).into(),
-        None => match device.default_output_config() {
-            Ok(c) => c.into(),
-            Err(_) => return,
-        },
+    let config = match pick_output_config(&device, sample_rate, channels as u16) {
+        Some(c) => c,
+        None => {
+            let err_msg = "No suitable output config".to_string();
+            info!("[file] {}", err_msg);
+            *load_error.lock() = err_msg;
+            return;
+        }
     };
 
     let mut registry = CodecRegistry::new();
@@ -312,31 +232,7 @@ pub fn play_file_internal(
         audio_queue.lock().len()
     );
 
-    let queue_clone = audio_queue.clone();
-    let buffer_ready_clone = buffer_ready.clone();
-    let samples_played_clone = samples_played.clone();
-
-    let stream = match device.build_output_stream(
-        &config,
-        move |data: &mut [f32], _| {
-            if !buffer_ready_clone.load(Ordering::Relaxed) {
-                data.fill(0.0);
-                return;
-            }
-
-            let mut queue = queue_clone.lock();
-            let mut count = 0;
-            for sample in data.iter_mut() {
-                *sample = queue.pop_front().unwrap_or(0.0);
-                count += 1;
-            }
-            if count > 0 {
-                samples_played_clone.fetch_add(count as u64, Ordering::Relaxed);
-            }
-        },
-        |err| info!("[file] Stream error: {}", err),
-        None,
-    ) {
+    let stream = match build_output_stream(&device, &config, audio_queue.clone(), buffer_ready.clone(), samples_played.clone()) {
         Ok(s) => s,
         Err(e) => {
             let err_msg = format!("Failed to build stream: {}", e);

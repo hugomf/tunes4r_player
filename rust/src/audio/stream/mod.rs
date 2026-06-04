@@ -1,6 +1,7 @@
 //! Audio stream processing, loading, and decoding logic.
 
 pub mod buffer;
+pub mod cpal_source;
 pub mod decorator;
 pub mod handling;
 pub mod loader;
