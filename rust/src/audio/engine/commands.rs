@@ -66,11 +66,12 @@ impl PlaybackEngine {
         let source_kind_for_android = kind;
         #[cfg(not(target_os = "android"))]
         let file_path_for_thread = uri_for_playback.clone();
+        #[allow(unused_variables)]
         let source_kind = kind;
         self.playback_type = Some(match kind {
-            crate::audio::stream::source::SourceKind::File => {
-                PlaybackType::File { path: uri_for_playback }
-            }
+            crate::audio::stream::source::SourceKind::File => PlaybackType::File {
+                path: uri_for_playback,
+            },
             crate::audio::stream::source::SourceKind::Radio => PlaybackType::Stream {
                 url: uri_for_playback,
                 seek_byte_offset: 0,
@@ -186,9 +187,7 @@ impl PlaybackEngine {
         // Wait for initial buffer
         let timeout = Duration::from_secs(30);
         let start = std::time::Instant::now();
-        while !self.buffer_ready.load(Ordering::Relaxed)
-            && start.elapsed() < timeout
-        {
+        while !self.buffer_ready.load(Ordering::Relaxed) && start.elapsed() < timeout {
             std::thread::sleep(Duration::from_millis(50));
         }
         if !self.buffer_ready.load(Ordering::Relaxed) {
@@ -518,8 +517,7 @@ impl PlaybackEngine {
                     let seek_target = self.seek_target_ms.clone();
 
                     #[cfg(target_os = "android")]
-                    let play_fn =
-                        crate::audio::decoder::android_file_decoder::play_file_internal;
+                    let play_fn = crate::audio::decoder::android_file_decoder::play_file_internal;
                     #[cfg(not(target_os = "android"))]
                     let play_fn = crate::audio::decoder::file_decoder::play_file_internal;
 

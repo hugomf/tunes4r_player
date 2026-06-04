@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use symphonia::core::codecs::audio::AudioCodecParameters;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;

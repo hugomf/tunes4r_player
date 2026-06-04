@@ -19,7 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 #[cfg(target_os = "android")]
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{HostTrait, StreamTrait};
 #[cfg(target_os = "android")]
 use log::{error, info, LevelFilter};
 #[cfg(target_os = "android")]
@@ -491,7 +491,7 @@ pub fn play_file_internal(
         // --- Wait for the cpal output stream to drain the remaining queue
         // (no QueueSource to signal — just empty the buffer or stop).
         info!("[file] Decode complete, waiting for output drain");
-        let mut drain_deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let drain_deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !should_stop.load(Ordering::Relaxed) {
             if queue_for_decode.lock().is_empty() {
                 info!("[file] Queue empty, done draining");
