@@ -16,7 +16,7 @@
 //! (coreaudio), Android (aaudio), Linux (alsa), and Windows (wasapi).
 
 use cpal::traits::DeviceTrait;
-use cpal::{SampleFormat, Stream, StreamConfig};
+use cpal::{SampleFormat, Stream, StreamConfig, SupportedStreamConfigRange};
 use log::info;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -43,30 +43,54 @@ pub fn pick_output_config(
     sample_rate: u32,
     channels: u16,
 ) -> Option<StreamConfig> {
-    if let Ok(mut configs) = device.supported_output_configs() {
-        // First try: exact channel match + sample rate in range.
-        if let Some(cfg) = configs.find(|c| {
-            c.min_sample_rate() <= sample_rate
-                && c.max_sample_rate() >= sample_rate
-                && c.channels() == channels
-        }) {
-            let supported = cfg.with_sample_rate(sample_rate);
-            // Prefer F32 to avoid per-sample quantization in the callback.
-            if supported.sample_format() == SampleFormat::F32 {
-                return Some(supported.config());
-            }
-        }
-        // Second try: sample rate matches, channels differ (accept
-        // the device's native channel count; resampling is a follow-up).
-        if let Some(cfg) = configs.find(|c| {
-            c.min_sample_rate() <= sample_rate && c.max_sample_rate() >= sample_rate
-        }) {
-            return Some(cfg.with_sample_rate(sample_rate).config());
+    if let Ok(configs) = device.supported_output_configs() {
+        if let Some(cfg) = pick_output_config_from_ranges(configs, sample_rate, channels) {
+            return Some(cfg);
         }
     }
 
     // Fall back to default config.
     device.default_output_config().ok().map(|c| c.config())
+}
+
+/// Pure (device-free) version of the config selection logic.
+///
+/// Three-stage fallback, in order:
+///   1. Exact match: `channels` match AND `sample_rate` in the range,
+///      preferring F32 sample format (no per-sample quantization in the
+///      callback hot path).
+///   2. Sample-rate-only match: any config that supports `sample_rate`
+///      (accepts device's native channel count; resampling is a follow-up).
+///   3. `None` — the caller should fall back to the device's default.
+///
+/// Takes an `Iterator` of `SupportedStreamConfigRange` so it's trivially
+/// testable without a real device.
+pub fn pick_output_config_from_ranges<I>(configs: I, sample_rate: u32, channels: u16) -> Option<StreamConfig>
+where
+    I: IntoIterator<Item = SupportedStreamConfigRange>,
+{
+    let configs: Vec<_> = configs.into_iter().collect();
+
+    // First try: exact channel match + sample rate in range.
+    if let Some(cfg) = configs.iter().find(|c| {
+        c.min_sample_rate() <= sample_rate
+            && c.max_sample_rate() >= sample_rate
+            && c.channels() == channels
+    }) {
+        let supported = cfg.with_sample_rate(sample_rate);
+        // Prefer F32 to avoid per-sample quantization in the callback.
+        if supported.sample_format() == SampleFormat::F32 {
+            return Some(supported.config());
+        }
+    }
+    // Second try: sample rate matches, channels differ (accept
+    // the device's native channel count; resampling is a follow-up).
+    if let Some(cfg) = configs.iter().find(|c| {
+        c.min_sample_rate() <= sample_rate && c.max_sample_rate() >= sample_rate
+    }) {
+        return Some(cfg.with_sample_rate(sample_rate).config());
+    }
+    None
 }
 
 /// Build a cpal output stream that drains from `audio_ring`.

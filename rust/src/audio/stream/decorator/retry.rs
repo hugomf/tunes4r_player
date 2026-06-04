@@ -25,7 +25,11 @@ impl RetryDecorator {
         RetryDecorator::with_config(inner, 5, 2000)
     }
 
-    pub fn with_config(inner: Box<dyn StreamSource>, max_retries: u32, retry_delay_ms: u64) -> Self {
+    pub fn with_config(
+        inner: Box<dyn StreamSource>,
+        max_retries: u32,
+        retry_delay_ms: u64,
+    ) -> Self {
         let info = inner.info().clone();
         Self {
             inner: Arc::new(Mutex::new(inner)),
@@ -145,7 +149,9 @@ mod tests {
                 data,
                 info: SourceInfo {
                     kind: SourceKind::Radio,
-                    stream_type: crate::models::StreamType::Live { buffer_window_bytes: 4096 },
+                    stream_type: crate::models::StreamType::Live {
+                        buffer_window_bytes: 4096,
+                    },
                     uri: "test://fickle".into(),
                     title: None,
                 },
@@ -169,7 +175,11 @@ mod tests {
         ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
             let data = self.data.clone();
             let fail_every = self.fail_every;
-            Ok(Box::new(FickleReader { data, pos: 0, fail_every }))
+            Ok(Box::new(FickleReader {
+                data,
+                pos: 0,
+                fail_every,
+            }))
         }
     }
 
@@ -184,8 +194,11 @@ mod tests {
             if self.pos >= self.data.len() {
                 return Ok(0);
             }
-            if self.fail_every > 0 && self.pos > 0 && self.pos % self.fail_every == 0 {
-                return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "simulated failure"));
+            if self.fail_every > 0 && self.pos > 0 && self.pos.is_multiple_of(self.fail_every) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "simulated failure",
+                ));
             }
             let remaining = self.data.len() - self.pos;
             let n = buf.len().min(remaining);

@@ -279,7 +279,7 @@ impl StreamBuffer {
                 self.trim_count += 1;
                 self.total_trimmed_bytes += safe_drop;
 
-                if self.trim_count % 100 == 0 {
+                if self.trim_count.is_multiple_of(100) {
                     info!(
                         "[buffer] TRIM #{}: dropping {} bytes (buffer: {} -> {})",
                         self.trim_count,
@@ -300,7 +300,7 @@ impl StreamBuffer {
                     self.read_offset = self.base_offset;
                 }
 
-                if self.trim_count % 1000 == 0 {
+                if self.trim_count.is_multiple_of(1000) {
                     info!(
                         "[buffer] TRIM STATS: total={} trims, {} bytes trimmed, avg={} bytes/trim",
                         self.trim_count,

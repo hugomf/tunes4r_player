@@ -3,15 +3,10 @@
 //! Provides FFT-based spectrum analysis and equalizer capabilities.
 
 use crate::models::{EqualizerBand, SpectrumData};
-use crossbeam::channel;
 use num_complex::Complex;
-use rodio::Source;
 use rustfft::Fft;
-use std::collections::VecDeque;
 use std::f32::consts::PI;
-use std::num::NonZero;
 use std::sync::Arc;
-use std::time::Duration;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -20,9 +15,6 @@ const FFT_SIZE: usize = 1024;
 
 /// Default number of Bark-scale output bands.
 pub const DEFAULT_SPECTRUM_BANDS: usize = 24;
-
-/// Temporal-smoothing coefficient (higher = more smoothing).
-const SMOOTHING_FACTOR: f32 = 0.18;
 
 /// Floor for RMS magnitude before dB conversion (avoids −∞).
 const RMS_FLOOR: f32 = 1e-4;
@@ -347,205 +339,6 @@ impl Equalizer {
     pub fn process(&self, samples: &mut [f32]) {
         // Placeholder — a full implementation would use per-band biquad filters
         let _ = (samples, self.sample_rate);
-    }
-}
-
-// ── SpectrumSource — real-time FFT tap on the audio pipeline ────────────────
-
-/// Wraps any `Source<Item = f32>` and passes all samples through unchanged
-/// while performing FFT analysis and sending Bark-scale band data downstream.
-pub struct SpectrumSource<S> {
-    inner: S,
-    sender: channel::Sender<Vec<f32>>,
-
-    // FFT state
-    sample_buffer: VecDeque<f32>,
-    fft_input: Vec<Complex<f32>>,
-    fft_scratch: Vec<Complex<f32>>,
-    fft_plan: Arc<dyn Fft<f32>>,
-    window: Vec<f32>,
-
-    // Pre-computed mapping from Bark bands → FFT bin ranges
-    bark_bin_ranges: Vec<(usize, usize)>,
-
-    // Temporal smoothing
-    previous_bands: Vec<f32>,
-    band_count: usize,
-
-    // Overlap-add bookkeeping
-    hop_size: usize,
-    hop_counter: usize,
-
-    // Channel mixing
-    channel_accumulator: f32,
-    samples_in_frame: u16,
-
-    // Audio metadata
-    sample_rate: u32,
-    channels: u16,
-}
-
-impl<S> SpectrumSource<S>
-where
-    S: Source<Item = f32>,
-{
-    pub fn new(inner: S, sender: channel::Sender<Vec<f32>>, band_count: usize) -> Self {
-        let sample_rate = inner.sample_rate().get();
-        let channels = inner.channels().get();
-
-        let mut planner = rustfft::FftPlanner::new();
-        let fft_plan = planner.plan_fft_forward(FFT_SIZE);
-
-        Self {
-            inner,
-            sender,
-            sample_buffer: VecDeque::with_capacity(FFT_SIZE),
-            fft_input: vec![Complex::default(); FFT_SIZE],
-            fft_scratch: vec![Complex::default(); fft_plan.get_inplace_scratch_len()],
-            fft_plan,
-            window: hann_window(FFT_SIZE),
-            bark_bin_ranges: precompute_bark_bin_ranges(band_count, sample_rate, FFT_SIZE),
-            previous_bands: vec![0.0; band_count],
-            hop_size: FFT_SIZE / 2,
-            hop_counter: 0,
-            channel_accumulator: 0.0,
-            samples_in_frame: 0,
-            sample_rate,
-            channels,
-            band_count,
-        }
-    }
-
-    /// Flush FFT state after a seek to avoid stale-data artifacts.
-    fn reset_fft_state(&mut self) {
-        self.sample_buffer.clear();
-        self.hop_counter = 0;
-        self.previous_bands.fill(0.0);
-        self.channel_accumulator = 0.0;
-        self.samples_in_frame = 0;
-    }
-
-    /// Accumulate samples across channels and return a mono sample when a
-    /// full frame is complete.
-    fn accumulate_channel(&mut self, sample: f32) -> Option<f32> {
-        self.channel_accumulator += sample;
-        self.samples_in_frame += 1;
-
-        if self.samples_in_frame >= self.channels {
-            let mono = self.channel_accumulator / self.channels as f32;
-            self.channel_accumulator = 0.0;
-            self.samples_in_frame = 0;
-            Some(mono)
-        } else {
-            None
-        }
-    }
-
-    fn process_fft(&mut self) {
-        if self.sample_buffer.len() < FFT_SIZE {
-            return;
-        }
-
-        // Apply window directly into the reusable FFT input buffer
-        for (i, sample) in self.sample_buffer.iter().take(FFT_SIZE).enumerate() {
-            self.fft_input[i] = Complex {
-                re: *sample * self.window[i],
-                im: 0.0,
-            };
-        }
-
-        self.fft_plan
-            .process_with_scratch(&mut self.fft_input, &mut self.fft_scratch);
-
-        let bands = self.bins_to_bark_bands();
-
-        // In-place temporal smoothing
-        for (new, prev) in bands.iter().zip(self.previous_bands.iter_mut()) {
-            *prev = *new * (1.0 - SMOOTHING_FACTOR) + *prev * SMOOTHING_FACTOR;
-        }
-
-        // Non-blocking send — drop the frame if the channel is full
-        let _ = self.sender.try_send(self.previous_bands.clone());
-
-        // Drain `hop_size` oldest samples so the next frame overlaps correctly
-        let drain_count = self.hop_size.min(self.sample_buffer.len());
-        self.sample_buffer.drain(..drain_count);
-    }
-
-    fn bins_to_bark_bands(&self) -> Vec<f32> {
-        (0..self.band_count)
-            .map(|band| {
-                let (low_bin, high_bin) = self.bark_bin_ranges[band];
-                let bin_count = (high_bin - low_bin) as f32;
-
-                let sum_sq: f32 = self.fft_input[low_bin..high_bin]
-                    .iter()
-                    .map(|c| c.re * c.re + c.im * c.im)
-                    .sum();
-
-                let rms = (sum_sq / bin_count).sqrt();
-                let db = 20.0 * rms.max(RMS_FLOOR).log10() + DB_OFFSET;
-                let normalized = (db - DB_FLOOR) / DB_RANGE;
-
-                // Gentle quadratic boost for high bands to compensate for
-                // natural spectral roll-off in typical audio.
-                let t = band as f32 / (self.band_count - 1).max(1) as f32;
-                let boost = 1.0 + t * t;
-
-                (normalized * boost).clamp(0.0, 1.0)
-            })
-            .collect()
-    }
-}
-
-impl<S> Iterator for SpectrumSource<S>
-where
-    S: Source<Item = f32>,
-{
-    type Item = f32;
-
-    fn next(&mut self) -> Option<f32> {
-        let sample = self.inner.next()?;
-
-        // Mix multi-channel audio down to mono for FFT analysis.
-        // The passthrough sample is *not* altered.
-        if let Some(mono) = self.accumulate_channel(sample) {
-            self.sample_buffer.push_back(mono);
-
-            self.hop_counter += 1;
-            if self.hop_counter >= self.hop_size && self.sample_buffer.len() >= FFT_SIZE {
-                self.hop_counter = 0;
-                self.process_fft();
-            }
-        }
-
-        Some(sample)
-    }
-}
-
-impl<S> Source for SpectrumSource<S>
-where
-    S: Source<Item = f32>,
-{
-    fn current_span_len(&self) -> Option<usize> {
-        self.inner.current_span_len()
-    }
-
-    fn channels(&self) -> NonZero<u16> {
-        NonZero::new(self.channels).unwrap_or_else(|| NonZero::new(2).unwrap())
-    }
-
-    fn sample_rate(&self) -> NonZero<u32> {
-        NonZero::new(self.sample_rate).unwrap_or_else(|| NonZero::new(44100).unwrap())
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        self.inner.total_duration()
-    }
-
-    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
-        self.reset_fft_state();
-        self.inner.try_seek(pos)
     }
 }
 

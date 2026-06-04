@@ -128,14 +128,17 @@ fn packet_skip_seek(
     should_stop: &Arc<AtomicBool>,
 ) -> Result<SeekOutcome, SeekError> {
     let sample_rate = codec_params.sample_rate.unwrap_or(44100) as f64;
-    let channels = codec_params.channels.as_ref().map(|c| c.count()).unwrap_or(2) as u64;
+    let channels = codec_params
+        .channels
+        .as_ref()
+        .map(|c| c.count())
+        .unwrap_or(2) as u64;
 
     // Target expressed in interleaved samples (the unit
     // `copy_to_vec_interleaved` produces). This is the single source of
     // truth for the comparison — keeping the unit consistent across
     // platforms is what fixed the iOS off-by-`channels` bug.
-    let target_interleaved =
-        ((target_ms as f64 / 1000.0) * sample_rate * channels as f64) as u64;
+    let target_interleaved = ((target_ms as f64 / 1000.0) * sample_rate * channels as f64) as u64;
     let mut skipped_interleaved: u64 = 0;
 
     let mut registry = CodecRegistry::new();
@@ -183,7 +186,8 @@ fn packet_skip_seek(
         match skip_decoder.decode(&packet) {
             Ok(audio_buf) => {
                 let frames = audio_buf.frames() as u64;
-                let interleaved_in_packet = frames.checked_mul(channels).ok_or(SeekError::Overflow)?;
+                let interleaved_in_packet =
+                    frames.checked_mul(channels).ok_or(SeekError::Overflow)?;
                 skipped_interleaved = skipped_interleaved
                     .checked_add(interleaved_in_packet)
                     .ok_or(SeekError::Overflow)?;
@@ -262,7 +266,7 @@ mod tests {
         // A packet that produces 1 frame contains `channels` interleaved
         // samples. The old iOS code would exit the skip loop after half
         // the requested time for a stereo file.
-        let one_frame_interleaved = 1_u64 * channels;
+        let one_frame_interleaved = channels;
         assert_eq!(one_frame_interleaved, 2);
 
         // Sanity: if the loop exits when skipped_interleaved (the new

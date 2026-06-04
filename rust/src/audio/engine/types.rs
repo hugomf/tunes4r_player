@@ -70,7 +70,7 @@ impl PlaybackEngine {
     }
 
     pub fn position(&self) -> PlaybackPosition {
-        self.position.clone()
+        self.position
     }
 
     pub fn stream_url(&self) -> Option<String> {
@@ -119,9 +119,7 @@ impl PlaybackEngine {
     }
 
     pub fn source_supports(&self, capability: crate::audio::stream::source::Capability) -> bool {
-        self.source
-            .as_ref()
-            .map_or(false, |s| s.supports(capability))
+        self.source.as_ref().is_some_and(|s| s.supports(capability))
     }
 
     pub fn pipe_bytes_sent(&self) -> u64 {

@@ -107,11 +107,7 @@ impl Read for SeekableStreamReader {
         }
 
         // Calculate available data
-        let available = if self.read_pos < window_end {
-            window_end - self.read_pos
-        } else {
-            0
-        };
+        let available = window_end.saturating_sub(self.read_pos);
 
         // If we have data, ALWAYS read it first
         if available > 0 {
@@ -123,7 +119,7 @@ impl Read for SeekableStreamReader {
                 self.diag.total_bytes_read += copied;
 
                 // Log less frequently
-                if self.diag.total_bytes_read % 65536 == 0 {
+                if self.diag.total_bytes_read.is_multiple_of(65536) {
                     debug!(
                         "[reader] Read {} bytes total, current pos: {}",
                         self.diag.total_bytes_read, self.read_pos
@@ -150,11 +146,7 @@ impl Read for SeekableStreamReader {
                 buffer.read_offset = window_start;
             }
 
-            let available = if self.read_pos < window_end {
-                window_end - self.read_pos
-            } else {
-                0
-            };
+            let available = window_end.saturating_sub(self.read_pos);
 
             if available > 0 {
                 let to_read = out_buf.len().min(available);
@@ -173,7 +165,7 @@ impl Read for SeekableStreamReader {
             self.diag.silence_injected_count += 1;
 
             if self.diag.silence_injected_count <= 10
-                || self.diag.silence_injected_count % 1000 == 0
+                || self.diag.silence_injected_count.is_multiple_of(1000)
             {
                 debug!(
     "[reader] UNDERRUN #{}: injecting {}B silence (buffer: {}B, pos: {}/{}, available: {})",

@@ -3,8 +3,7 @@ use std::marker::{Send, Sync};
 use std::thread;
 
 use crate::ffi::AudioEngineHandle;
-use log::{info};
-
+use log::info;
 
 struct ThreadSafeEngineHandle(*mut AudioEngineHandle);
 
@@ -12,13 +11,13 @@ unsafe impl Send for ThreadSafeEngineHandle {}
 unsafe impl Sync for ThreadSafeEngineHandle {}
 
 pub fn fetch_and_pipe(url: &str, engine: &AudioEngineHandle) -> Result<(), String> {
-    info!("[fetch] fetch_and_pipe called with URL: {}",  url);
+    info!("[fetch] fetch_and_pipe called with URL: {}", url);
 
     engine
         .playback()
         .write()
         .unwrap()
-        .play_stream_from_bytes_internal(&url.to_string())
+        .play_stream_from_bytes_internal(url)
         .map_err(|e| format!("Failed to start pipe playback: {}", e))?;
 
     let url_owned = url.to_string();
@@ -26,9 +25,9 @@ pub fn fetch_and_pipe(url: &str, engine: &AudioEngineHandle) -> Result<(), Strin
         ThreadSafeEngineHandle(engine as *const AudioEngineHandle as *mut AudioEngineHandle);
 
     thread::spawn(move || {
-        info!("[fetch] Background thread starting with URL: {}",  url_owned);
+        info!("[fetch] Background thread starting with URL: {}", url_owned);
         if let Err(e) = fetch_and_pipe_internal(&url_owned, engine_ptr) {
-            info!("[fetch] Error: {}",  e);
+            info!("[fetch] Error: {}", e);
         }
     });
 
@@ -36,7 +35,7 @@ pub fn fetch_and_pipe(url: &str, engine: &AudioEngineHandle) -> Result<(), Strin
 }
 
 fn fetch_and_pipe_internal(url: &str, engine: ThreadSafeEngineHandle) -> Result<(), String> {
-    info!("[fetch] fetch_and_pipe_internal with URL: {}",  url);
+    info!("[fetch] fetch_and_pipe_internal with URL: {}", url);
 
     let client = crate::audio::http::build_blocking_http_client();
     let mut response = client
@@ -58,7 +57,7 @@ fn fetch_and_pipe_internal(url: &str, engine: ThreadSafeEngineHandle) -> Result<
                     .headers()
                     .get("content-range")
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.split('/').last().and_then(|s| s.parse().ok()))
+                    .and_then(|v| v.split('/').next_back().and_then(|s| s.parse().ok()))
                     .unwrap_or(0),
             );
 

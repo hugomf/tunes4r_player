@@ -105,16 +105,11 @@ pub async fn fetch_stream_async(
     tokio::spawn(async move {
         let mut buf = [0u8; 8192];
         let mut reader = stream_dl;
-        loop {
-            match std::io::Read::read(&mut reader, &mut buf) {
-                Ok(n) => {
-                    if n > 0 {
-                        pipe_writer_clone.push(&buf[..n]);
-                    } else {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(n) = std::io::Read::read(&mut reader, &mut buf) {
+            if n > 0 {
+                pipe_writer_clone.push(&buf[..n]);
+            } else {
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
         pipe_writer_clone.end();

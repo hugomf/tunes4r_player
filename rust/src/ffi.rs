@@ -636,7 +636,7 @@ pub extern "C" fn audio_engine_poll_pipe_seek_byte_offset(handle: *mut AudioEngi
             return -1;
         }
 
-        let engine = unsafe { &mut *handle }.playback.write().unwrap();
+        let engine = unsafe { &mut *handle }.playback.read().unwrap();
 
         // Check if we have a pipe writer
         if let Some(pipe_writer) = &engine.stream_pipe {

@@ -106,7 +106,7 @@ impl Read for PipeReader {
         }
 
         if let Some(ref err) = state.error {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, err.clone()));
+            return Err(std::io::Error::other(err.clone()));
         }
 
         if state.buffer.is_empty() && state.done {

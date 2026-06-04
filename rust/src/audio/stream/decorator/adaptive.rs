@@ -56,7 +56,7 @@ impl StreamSource for AdaptiveBufferDecorator {
                         Ok(n) => {
                             writer.push(&buf[..n]);
                             // Rate-limit logging: once per 30s
-                            if start.elapsed().as_secs() % 30 == 0 && n == 0 {
+                            if start.elapsed().as_secs().is_multiple_of(30) && n == 0 {
                                 log::debug!("[adaptive] Pre-fetching... {} bytes", n);
                             }
                         }
@@ -112,9 +112,16 @@ mod tests {
         fn info(&self) -> &SourceInfo {
             &self.info
         }
-        fn supports(&self, _: Capability) -> bool { false }
-        fn as_any(&self) -> &dyn std::any::Any { self }
-        fn open(&self, _: Option<u64>) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+        fn supports(&self, _: Capability) -> bool {
+            false
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn open(
+            &self,
+            _: Option<u64>,
+        ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
             Ok(Box::new(std::io::Cursor::new(vec![0u8; 100])))
         }
     }

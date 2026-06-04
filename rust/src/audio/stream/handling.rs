@@ -299,7 +299,7 @@ pub fn decode_and_play_from_read(
             info!("[stream] No default config, using fallback: 44100 Hz, 2 ch");
             cpal::StreamConfig {
                 channels: 2,
-                sample_rate: 44100_u32.into(),
+                sample_rate: 44100_u32,
                 buffer_size: cpal::BufferSize::Default,
             }
         }
@@ -593,7 +593,7 @@ pub fn decode_and_play_from_read(
 
                     queue_for_decode.lock().extend(samples);
                     decode_count += 1;
-                    if decode_count % 100 == 0 {
+                    if decode_count.is_multiple_of(100) {
                         info!(
                             "[stream] Decoded {} packets, queue: {} samples, played: {}",
                             decode_count,
@@ -780,7 +780,6 @@ pub fn play_stream_internal(
                 let err_msg = format!("Failed to get YouTube stream URL: {}", e);
                 debug!("[stream] {}", err_msg);
                 *load_error.lock() = err_msg;
-                return;
             }
         }
     } else {

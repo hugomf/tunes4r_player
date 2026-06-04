@@ -234,18 +234,14 @@ fn main() {
                         let buf_spec = audio_buf.spec();
                         let actual_channels = buf_spec.channels().count();
                         let actual_rate = buf_spec.rate();
-                        if actual_channels != channels || actual_rate != sample_rate {
-                            if total_packets <= 5 || total_packets % 100 == 0 {
-                                eprintln!(
-                                    "[decode] ⚠️ Packet {}: expected {}ch/{}Hz, \
-                                     actual {}ch/{}Hz",
-                                    total_packets,
-                                    channels,
-                                    sample_rate,
-                                    actual_channels,
-                                    actual_rate
-                                );
-                            }
+                        if (actual_channels != channels || actual_rate != sample_rate)
+                            && (total_packets <= 5 || total_packets.is_multiple_of(100))
+                        {
+                            eprintln!(
+                                "[decode] ⚠️ Packet {}: expected {}ch/{}Hz, \
+                                 actual {}ch/{}Hz",
+                                total_packets, channels, sample_rate, actual_channels, actual_rate
+                            );
                         }
                         let mut samples: Vec<f32> = Vec::new();
                         audio_buf.copy_to_vec_interleaved(&mut samples);
@@ -299,7 +295,7 @@ fn main() {
                             );
                             break;
                         }
-                        if decode_errors <= 3 || decode_errors % 10 == 0 {
+                        if decode_errors <= 3 || decode_errors.is_multiple_of(10) {
                             eprintln!(
                                 "[decode] Packet decode error: {} (error #{})",
                                 e, decode_errors
@@ -325,7 +321,7 @@ fn main() {
                         );
                         break;
                     }
-                    if decode_errors <= 5 || decode_errors % 10 == 0 {
+                    if decode_errors <= 5 || decode_errors.is_multiple_of(10) {
                         eprintln!("[decode] Packet error: {} (error #{})", e, decode_errors);
                     }
                     std::thread::sleep(Duration::from_millis(100));
@@ -334,8 +330,6 @@ fn main() {
         }
 
         let elapsed = decode_start.elapsed();
-        // Use channels from the capture in the loop — this has been updated at compile time
-        // but we just approximate here since it's the final message
         let audio_time = total_samples as f64 / (sample_rate as f64 * channels as f64);
         eprintln!(
             "[decode] DONE: {} packets, {} samples ({:.1}s audio) \

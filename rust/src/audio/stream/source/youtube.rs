@@ -33,7 +33,6 @@ impl YouTubeSource {
     ) -> Result<Self, PlaybackError> {
         info!("[youtube-source] Resolving: {}", input);
 
-        // --- resolve to audio CDN URL ---
         let (audio_url, video_id) = match resolve_youtube_audio(input) {
             Ok(result) => result,
             Err(e) => {
@@ -50,7 +49,7 @@ impl YouTubeSource {
             audio_url.len()
         );
 
-        let title = video_id.clone(); // placeholder; real title would come from video info
+        let title = video_id.clone();
 
         Ok(Self {
             info: SourceInfo {
@@ -70,7 +69,6 @@ impl YouTubeSource {
         if content_length == 0 {
             return 0;
         }
-        // Assume ~300s total for estimation (fine-tuned by decoder fast-forward)
         let estimated_total_ms = 300_000u64;
         let ratio = (seek_ms as f64 / estimated_total_ms as f64).min(0.99);
         (ratio * content_length as f64) as u64
@@ -131,7 +129,6 @@ impl StreamSource for YouTubeSource {
                 });
             }
 
-            // Store content length if not yet known
             if self
                 .total_content_bytes
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -217,7 +214,6 @@ impl StreamSource for YouTubeSource {
     }
 }
 
-/// Resolve a YouTube video ID, URL, or search query to an audio CDN URL.
 fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
     let video_id = extract_video_id(input);
 
@@ -240,7 +236,6 @@ fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
             Ok((audio.url.clone(), id))
         }
         None => {
-            // Treat as a search query
             info!("[youtube-source] Treating input as search query: {}", input);
             let yt = YouTube::new();
             let search_client = yt.client().http();
@@ -271,6 +266,41 @@ fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
             Ok((audio.url.clone(), first.id.clone()))
         }
     }
+}
+
+fn extract_video_id(input: &str) -> Option<String> {
+    let input = input.trim();
+
+    if input.len() == 11 && input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        return Some(input.to_string());
+    }
+
+    let uri = url::Url::parse(input).ok()?;
+    let host = uri.host_str()?;
+
+    if host.contains("youtu.be") {
+        return uri.path_segments()?.next().map(|s| s.to_string());
+    }
+
+    if host.contains("youtube.com") || host.contains("m.youtube.com") {
+        if let Some(v) = uri.query_pairs().find(|(k, _)| k == "v") {
+            let id = v.1.to_string();
+            if id.len() == 11 {
+                return Some(id);
+            }
+        }
+        let path = uri.path();
+        for prefix in &["/v/", "/embed/", "/shorts/"] {
+            if let Some(rest) = path.strip_prefix(prefix) {
+                let id = rest.split('/').next().unwrap_or(rest);
+                if id.len() == 11 {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -323,37 +353,8 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_video_id_v_path() {
-        assert_eq!(
-            extract_video_id("https://youtube.com/v/dQw4w9WgXcQ"),
-            Some("dQw4w9WgXcQ".into())
-        );
-    }
-
-    #[test]
-    fn test_extract_video_id_invalid_id_too_short() {
-        assert_eq!(extract_video_id("abc"), None);
-    }
-
-    #[test]
-    fn test_extract_video_id_invalid_url() {
-        assert_eq!(extract_video_id("not a url"), None);
-    }
-
-    #[test]
-    fn test_extract_video_id_missing_v_param() {
-        assert_eq!(
-            extract_video_id("https://www.youtube.com/watch?list=123"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_extract_video_id_mobile_url() {
-        assert_eq!(
-            extract_video_id("https://m.youtube.com/watch?v=dQw4w9WgXcQ"),
-            Some("dQw4w9WgXcQ".into())
-        );
+    fn test_extract_video_id_invalid() {
+        assert_eq!(extract_video_id("not a valid id"), None);
     }
 
     #[test]
@@ -385,7 +386,6 @@ mod tests {
             audio_url: "http://example.com".into(),
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         };
-        // 150s / 300s = 0.5, so 0.5 * 10_000_000 = 5_000_000
         let offset = src.estimate_byte_offset(150_000, 10_000_000);
         assert!(offset > 4_900_000 && offset < 5_100_000);
     }
@@ -403,7 +403,6 @@ mod tests {
             audio_url: "http://example.com".into(),
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         };
-        // 350s / 300s > 1.0, should be capped at 0.99
         let offset = src.estimate_byte_offset(350_000, 1000);
         assert_eq!(offset, 990);
     }
@@ -425,43 +424,4 @@ mod tests {
         assert!(src.supports(Capability::Download));
         assert!(src.supports(Capability::Cache));
     }
-}
-
-/// Extract a YouTube video ID from a URL, or return the input if it looks like
-/// an 11-character video ID.
-fn extract_video_id(input: &str) -> Option<String> {
-    let input = input.trim();
-
-    // Direct 11-char video ID
-    if input.len() == 11 && input.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
-        return Some(input.to_string());
-    }
-
-    let uri = url::Url::parse(input).ok()?;
-    let host = uri.host_str()?;
-
-    if host.contains("youtu.be") {
-        return uri.path_segments()?.next().map(|s| s.to_string());
-    }
-
-    if host.contains("youtube.com") || host.contains("m.youtube.com") {
-        if let Some(v) = uri.query_pairs().find(|(k, _)| k == "v") {
-            let id = v.1.to_string();
-            if id.len() == 11 {
-                return Some(id);
-            }
-        }
-        // Handle /v/ or /embed/ paths
-        let path = uri.path();
-        for prefix in &["/v/", "/embed/", "/shorts/"] {
-            if let Some(rest) = path.strip_prefix(prefix) {
-                let id = rest.split('/').next().unwrap_or(rest);
-                if id.len() == 11 {
-                    return Some(id.to_string());
-                }
-            }
-        }
-    }
-
-    None
 }

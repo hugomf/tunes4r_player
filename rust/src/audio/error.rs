@@ -20,16 +20,6 @@ pub enum PlaybackError {
         source: std::io::Error,
     },
 
-    #[error(
-        "Failed to decode audio from '{source_type}' format: {detail} (decoder error: {source})"
-    )]
-    Decode {
-        source_type: String,
-        detail: String,
-        #[source]
-        source: rodio::decoder::DecoderError,
-    },
-
     #[error("Failed to initialize audio output device: {detail}")]
     OutputInit { detail: String },
 

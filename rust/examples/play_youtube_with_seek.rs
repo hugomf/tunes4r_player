@@ -33,8 +33,7 @@ fn main() {
     } else {
         eprintln!("[youtube] Searching for: {}", arg);
         let client = yt.client().http();
-        let results =
-            tunes4r::youtube::search::search(client, arg, 5).expect("Search failed");
+        let results = tunes4r::youtube::search::search(client, arg, 5).expect("Search failed");
         let selected = results.into_iter().next().expect("No results found");
         eprintln!("[youtube] Selected: {} — {}", selected.id, selected.title);
         selected.id
@@ -65,7 +64,7 @@ fn main() {
     let engine_clone = engine.clone();
     let fetch_url = stream_url.clone();
 
-    let fetch_thread = std::thread::spawn(move || loop {
+    let fetch_thread = std::thread::spawn(move || {
         eprintln!("[fetch] Connecting...");
         let response = match http_client.get(&fetch_url).send() {
             Ok(r) if r.status().is_success() => r,
