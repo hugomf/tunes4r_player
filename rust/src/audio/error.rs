@@ -53,6 +53,9 @@ pub enum PlaybackError {
 
     #[error("Cache error: {detail}")]
     Cache { detail: String },
+
+    #[error("Unsupported URI scheme: {scheme}")]
+    UnsupportedScheme { scheme: String },
 }
 
 impl From<std::io::Error> for PlaybackError {

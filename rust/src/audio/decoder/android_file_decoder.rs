@@ -47,7 +47,7 @@ use crate::audio::stream::cpal_source::{build_output_stream, pick_output_config}
 use crate::dsp::RmsSpectrumAnalyzer;
 
 #[cfg(target_os = "android")]
-use crate::audio::decoder::seek::seek_to_position;
+use crate::audio::decoder::seek::{seek_to_position, SeekMethod};
 #[cfg(target_os = "android")]
 use crate::audio::stream::cpal_source::AudioBuffer;
 
@@ -271,21 +271,38 @@ pub fn play_file_internal(
         if seek_pos_ms > 0 {
             seek_target_ms.store(0, Ordering::Relaxed);
             info!("[file] Seek target: {} ms", seek_pos_ms);
-            if let Err(e) = seek_to_position(
+            match seek_to_position(
                 &mut format,
                 &codec_params,
                 track_id,
                 seek_pos_ms,
                 &should_stop,
             ) {
-                error!("[file] Seek failed: {}", e);
+                Ok(outcome) => {
+                    if outcome.method == SeekMethod::Native {
+                        decoder = match get_codec_registry()
+                            .make_audio_decoder(&codec_params, &AudioDecoderOptions::default())
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                *load_error.lock() = format!("Decoder reset failed: {}", e);
+                                return;
+                            }
+                        };
+                        info!("[file] Decoder reset after native seek");
+                    }
+                }
+                Err(e) => {
+                    error!("[file] Seek failed: {}", e);
+                }
             }
         }
 
-        let target_buffer_samples = (sample_rate as usize * 5) / 10 * channels as usize;
+        let prebuffer_secs = 7u64;
+        let target_buffer_samples = (sample_rate as u64 * prebuffer_secs) as usize * channels as usize;
         info!(
-            "[file] Pre-buffering {} samples...",
-            target_buffer_samples
+            "[file] Pre-buffering {} samples ({} seconds)...",
+            target_buffer_samples, prebuffer_secs
         );
 
         let queue_for_decode = audio_queue.clone();
@@ -358,7 +375,7 @@ pub fn play_file_internal(
                 return;
             }
         };
-    let config = match pick_output_config(&device, sample_rate, channels as u16) {
+    let config = match pick_output_config(&device) {
             Some(c) => c,
             None => {
                 let err_msg = "No suitable output config".to_string();
@@ -367,6 +384,12 @@ pub fn play_file_internal(
                 return;
             }
         };
+
+        // Use the device's actual output sample rate for all timing.
+        let device_sample_rate = config.sample_rate;
+        sample_rate_out.store(device_sample_rate as u64, Ordering::Relaxed);
+        channels_out.store(config.channels as u64, Ordering::Relaxed);
+        info!("[file] Device output: {} Hz, {} ch", device_sample_rate, config.channels);
 
         let stream = match build_output_stream(
             &device,
@@ -395,10 +418,13 @@ pub fn play_file_internal(
         info!("[file] Output stream started");
 
         let band_count = crate::audio::engine::get_band_count();
-        let mut analyzer = RmsSpectrumAnalyzer::new(sample_rate, band_count);
+        let mut analyzer = RmsSpectrumAnalyzer::new(device_sample_rate, band_count);
         crate::audio::engine::update_global_spectrum(vec![0.1f32; band_count]);
 
         // ── Decode loop (synchronous, same thread) ──
+        // Cap the decode queue at 10 seconds of device-rate audio to
+        // prevent unbounded growth.
+        let max_queue_samples = (device_sample_rate as usize) * 10 * (config.channels as usize);
         let mut packet_error_count = 0;
         let mut spectrum_accum: VecDeque<f32> = VecDeque::with_capacity(4096);
         let mut last_spectrum_update = std::time::Instant::now();
@@ -426,7 +452,20 @@ pub fn play_file_internal(
                                 spectrum_accum.push_back(s);
                             }
 
-                            queue_for_decode.lock().extend(samples);
+                            // Back-pressure: wait until queue has room.
+                            // Also breaks on seek/stop so we never block a seek.
+                            loop {
+                                let full = queue_for_decode.lock().len() + samples.len() > max_queue_samples;
+                                if !full { break; }
+                                if should_stop.load(Ordering::Relaxed) { break; }
+                                if seek_target_ms.load(Ordering::Acquire) > 0 { break; }
+                                thread::sleep(Duration::from_millis(5));
+                            }
+                            if !should_stop.load(Ordering::Relaxed)
+                                && seek_target_ms.load(Ordering::Relaxed) == 0
+                            {
+                                queue_for_decode.lock().extend(samples);
+                            }
 
                             if last_spectrum_update.elapsed().as_millis() >= 100
                                 && spectrum_accum.len() >= channels as usize
@@ -636,6 +675,18 @@ pub fn decode_and_play_from_read(
             &should_stop,
         ) {
             Ok(outcome) => {
+                if outcome.method == SeekMethod::Native {
+                    decoder = match get_codec_registry()
+                        .make_audio_decoder(&codec_params, &AudioDecoderOptions::default())
+                    {
+                        Ok(d) => d,
+                        Err(e) => {
+                            *load_error.lock() = format!("Decoder reset failed: {}", e);
+                            return;
+                        }
+                    };
+                    info!("[stream] Decoder reset after native seek");
+                }
                 info!(
                     "[stream] Seek complete: {:?}, residual {} samples",
                     outcome.method, outcome.residual_samples_to_skip
@@ -672,7 +723,7 @@ pub fn decode_and_play_from_read(
             return;
         }
     };
-    let config = match pick_output_config(&device, sample_rate, channels as u16) {
+    let config = match pick_output_config(&device) {
         Some(c) => c,
         None => {
             let err_msg = "No suitable output config".to_string();
@@ -681,6 +732,18 @@ pub fn decode_and_play_from_read(
             return;
         }
     };
+    let device_sample_rate = config.sample_rate;
+    let device_channels = config.channels;
+    sample_rate_out.store(device_sample_rate as u64, Ordering::Relaxed);
+    channels_out.store(device_channels as u64, Ordering::Relaxed);
+    info!(
+        "[stream] Device output: {} Hz, {} ch (codec: {} Hz, {} ch)",
+        device_sample_rate, device_channels, sample_rate, channels
+    );
+
+    // Recalculate prebuffer target using device rate.
+    let target_buffer_samples = (device_sample_rate as f32 * target_buffer_secs) as usize * device_channels as usize;
+
     let stream = match build_output_stream(
         &device,
         &config,
@@ -796,9 +859,11 @@ pub fn decode_and_play_from_read(
     ]);
 
     // ── Decode loop (synchronous, same thread) ──
+    // Cap the decode queue at 10 seconds of device-rate audio.
+    let max_queue_samples = (device_sample_rate as usize) * 10 * (device_channels as usize);
     let mut packet_error_count = 0;
     let band_count = crate::audio::engine::get_band_count();
-    let mut analyzer = RmsSpectrumAnalyzer::new(sample_rate, band_count);
+    let mut analyzer = RmsSpectrumAnalyzer::new(device_sample_rate, band_count);
     let mut spectrum_accum: VecDeque<f32> = VecDeque::with_capacity(4096);
     let mut last_spectrum_update = std::time::Instant::now();
     let mut decode_count: u64 = 0;
@@ -826,7 +891,20 @@ pub fn decode_and_play_from_read(
                             spectrum_accum.push_back(s);
                         }
 
-                        queue_for_decode.lock().extend(samples);
+                        // Back-pressure: wait until queue has room.
+                        // Also breaks on seek/stop so we never block a seek.
+                        loop {
+                            let full = queue_for_decode.lock().len() + samples.len() > max_queue_samples;
+                            if !full { break; }
+                            if should_stop.load(Ordering::Relaxed) { break; }
+                            if seek_target_ms.load(Ordering::Acquire) > 0 { break; }
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        if !should_stop.load(Ordering::Relaxed)
+                            && seek_target_ms.load(Ordering::Relaxed) == 0
+                        {
+                            queue_for_decode.lock().extend(samples);
+                        }
 
                         if last_spectrum_update.elapsed().as_millis() >= 100
                             && spectrum_accum.len() >= channels

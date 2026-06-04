@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:tunes4r_player/tunes4r_player.dart';
 
 void main() {
@@ -11,7 +13,8 @@ class Tunes4rPlayerExampleApp extends StatefulWidget {
   const Tunes4rPlayerExampleApp({super.key});
 
   @override
-  State<Tunes4rPlayerExampleApp> createState() => _Tunes4rPlayerExampleAppState();
+  State<Tunes4rPlayerExampleApp> createState() =>
+      _Tunes4rPlayerExampleAppState();
 }
 
 class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
@@ -20,9 +23,9 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   String _status = 'Initializing...';
   String _error = '';
 
-  final _uriCtrl = TextEditingController(
-    text: 'https://ice1.somafm.com/groovesalad-128-mp3',
-  );
+  String _assetPath = '';
+
+  final _uriCtrl = TextEditingController();
 
   // Seek / position state
   int _positionMs = 0;
@@ -52,17 +55,28 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
           if (state == PlaybackState.stopped || state == PlaybackState.error) {
             _positionMs = 0;
           }
-          // Pull a fresh error message on every state change so the
-          // UI shows *why* the engine entered an error state.
           if (state == PlaybackState.error || state == PlaybackState.stopped) {
             _error = _engine?.loadError ?? _engine?.lastError ?? '';
           }
         });
       });
       _startPositionPoll();
+
+      final file = File('assets/music.mp3');
+      if (await file.exists()) {
+        _assetPath = file.path;
+      } else {
+        final byteData = await rootBundle.load('assets/music.mp3');
+        final tempDir = Directory.systemTemp;
+        final tempFile = File('${tempDir.path}/music.mp3');
+        await tempFile.writeAsBytes(byteData.buffer.asUint8List());
+        _assetPath = tempFile.path;
+      }
+
       setState(() {
         _ready = true;
         _status = 'Engine ready';
+        _uriCtrl.text = _assetPath;
       });
     } catch (e) {
       setState(() {
@@ -216,7 +230,9 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
                       child: Text(
                         _formatMs(_positionMs),
                         textAlign: TextAlign.right,
-                        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
+                        style: const TextStyle(
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ),
                     Expanded(
@@ -242,10 +258,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
                             : null,
                       ),
                     ),
-                    SizedBox(
-                      width: 56,
-                      child: Text(_formatMs(_durationMs)),
-                    ),
+                    SizedBox(width: 56, child: Text(_formatMs(_durationMs))),
                   ],
                 ),
                 Text(

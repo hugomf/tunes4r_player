@@ -3,6 +3,7 @@
 use log::{debug, info, warn};
 
 use crate::audio::decoder::seek::seek_to_position;
+use crate::audio::stream::cpal_source::{build_output_stream, pick_output_config};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -217,31 +218,16 @@ pub fn play_file_internal(
     let buffer_ready_clone = buffer_ready.clone();
     let samples_played_clone = samples_played.clone();
 
-    let stream = match device.build_output_stream(
+    let stream = match build_output_stream(
+        &device,
         &config,
-        move |data: &mut [f32], _| {
-            if !buffer_ready_clone.load(Ordering::Relaxed) {
-                for sample in data.iter_mut() {
-                    *sample = 0.0;
-                }
-                return;
-            }
-            let mut queue = queue_clone.lock();
-            let mut count = 0;
-            for sample in data.iter_mut() {
-                *sample = queue.pop_front().unwrap_or(0.0);
-                count += 1;
-            }
-            if count > 0 {
-                samples_played_clone.fetch_add(count as u64, Ordering::Relaxed);
-            }
-        },
-        |err| info!("[file] Stream error: {}", err),
-        None,
+        queue_for_decode.clone(),
+        buffer_ready.clone(),
+        samples_played.clone(),
     ) {
         Ok(s) => s,
         Err(e) => {
-            let err_msg = format!("Failed to build stream: {}", e);
+            let err_msg = format!("Failed to build output stream: {}", e);
             info!("[file] {}", err_msg);
             *load_error.lock() = err_msg;
             return;
@@ -250,21 +236,23 @@ pub fn play_file_internal(
 
     buffer_ready.store(true, Ordering::Relaxed);
     is_playing_flag.store(true, Ordering::Relaxed);
-    info!("[file] Playback flags set before stream start");
-
-    stream.play().expect("Failed to start stream");
-    info!("[file] Audio stream started!");
+    info!("[file] Output stream started");
 
     let band_count = crate::audio::engine::get_band_count();
     let mut analyzer = RmsSpectrumAnalyzer::new(sample_rate, band_count);
     let mut spectrum_accum: VecDeque<f32> = VecDeque::with_capacity(4096);
     let mut last_spectrum_update = std::time::Instant::now();
 
-    let queue_for_decode = audio_queue.clone();
-
+    // ── Decode loop (synchronous, same thread) ──
     loop {
         if should_stop.load(Ordering::Relaxed) {
-            info!("[file] Stop requested");
+            info!("[file] Stop requested during decode");
+            break;
+        }
+
+        // Check for seek request
+        if seek_target_ms.load(Ordering::Acquire) > 0 {
+            info!("[file] Seek requested during playback, stopping decode");
             break;
         }
 
@@ -296,21 +284,25 @@ pub fn play_file_internal(
 
                 queue_for_decode.lock().extend(samples);
 
-                if last_spectrum_update.elapsed().as_millis() >= 100 {
-                    if spectrum_accum.len() >= channels {
-                        let total = spectrum_accum.len() - (spectrum_accum.len() % channels);
-                        let count = total.min(4096);
-                        let raw: Vec<f32> = spectrum_accum.drain(..count).collect();
-                        let mono_frames = raw.len() / channels;
-                        let mut mono = Vec::with_capacity(mono_frames);
-                        for ch in 0..mono_frames {
-                            let base = ch * channels;
-                            let sum: f32 = raw[base..base + channels].iter().sum();
-                            mono.push(sum / channels as f32);
-                        }
-                        let normalized = analyzer.analyze(&mono);
-                        crate::audio::engine::update_global_spectrum(normalized);
+                if last_spectrum_update.elapsed().as_millis() >= 100
+                    && spectrum_accum.len() >= channels
+                {
+                    let ch = channels as usize;
+                    let total = spectrum_accum.len()
+                        - (spectrum_accum.len() % ch);
+                    let count = total.min(4096);
+                    let raw: Vec<f32> =
+                        spectrum_accum.drain(..count).collect();
+                    let mono_frames = raw.len() / ch;
+                    let mut mono = Vec::with_capacity(mono_frames);
+                    for frame in 0..mono_frames {
+                        let base = frame * ch;
+                        let sum: f32 =
+                            raw[base..base + ch].iter().sum();
+                        mono.push(sum / ch as f32);
                     }
+                    let normalized = analyzer.analyze(&mono);
+                    crate::audio::engine::update_global_spectrum(normalized);
                     last_spectrum_update = std::time::Instant::now();
                 }
             }
@@ -320,13 +312,24 @@ pub fn play_file_internal(
         }
     }
 
-    info!("[file] Decode loop finished. Waiting for playback to finish...");
-    while !should_stop.load(Ordering::Relaxed) && queue_for_decode.lock().len() > 0 {
+    // --- Wait for the cpal output stream to drain the remaining queue
+    // (no QueueSource to signal — just empty the buffer or stop).
+    info!("[file] Decode complete, waiting for output drain");
+    let drain_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !should_stop.load(Ordering::Relaxed) {
+        if queue_for_decode.lock().is_empty() {
+            info!("[file] Queue empty, done draining");
+            break;
+        }
+        if std::time::Instant::now() > drain_deadline {
+            error!("[file] Drain timeout — queue still has {} samples", queue_for_decode.lock().len());
+            break;
+        }
         thread::sleep(Duration::from_millis(100));
     }
 
-    stream.pause().ok();
     info!("[file] Playback complete");
+    drop(stream);
     buffer_ready.store(false, Ordering::Relaxed);
     is_playing_flag.store(false, Ordering::Relaxed);
 }
@@ -502,29 +505,16 @@ pub fn play_stream_internal(
     let buffer_ready_clone = buffer_ready.clone();
     let samples_played_clone = samples_played.clone();
 
-    let stream = match device.build_output_stream(
+    let stream = match build_output_stream(
+        &device,
         &config,
-        move |data: &mut [f32], _| {
-            if !buffer_ready_clone.load(Ordering::Relaxed) {
-                data.fill(0.0);
-                return;
-            }
-            let mut queue = queue_clone.lock();
-            let mut count = 0;
-            for sample in data.iter_mut() {
-                *sample = queue.pop_front().unwrap_or(0.0);
-                count += 1;
-            }
-            if count > 0 {
-                samples_played_clone.fetch_add(count as u64, Ordering::Relaxed);
-            }
-        },
-        |err| debug!("[stream] Audio error: {}", err),
-        None,
+        queue_clone.clone(),
+        buffer_ready.clone(),
+        samples_played.clone(),
     ) {
         Ok(s) => s,
         Err(e) => {
-            let err_msg = format!("Failed to build stream: {}", e);
+            let err_msg = format!("Failed to build output stream: {}", e);
             debug!("[stream] {}", err_msg);
             *load_error.lock() = err_msg;
             return;

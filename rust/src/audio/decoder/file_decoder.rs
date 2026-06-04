@@ -161,7 +161,7 @@ pub fn play_file_internal(
         }
     };
 
-    let config = match pick_output_config(&device, sample_rate, channels as u16) {
+    let config = match pick_output_config(&device) {
         Some(c) => c,
         None => {
             let err_msg = "No suitable output config".to_string();
@@ -170,6 +170,15 @@ pub fn play_file_internal(
             return;
         }
     };
+
+    // Use the device's actual output sample rate for all timing.
+    let device_sample_rate = config.sample_rate;
+    sample_rate_out.store(device_sample_rate as u64, Ordering::Relaxed);
+    channels_out.store(config.channels as u64, Ordering::Relaxed);
+    info!(
+        "[file] Device output: {} Hz, {} ch (codec: {} Hz, {} ch)",
+        device_sample_rate, config.channels, sample_rate, channels
+    );
 
     let mut registry = CodecRegistry::new();
     registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();
@@ -189,7 +198,7 @@ pub fn play_file_internal(
             }
         };
 
-    let pre_buffer_target = (sample_rate as usize * 7) / 10 * channels;
+    let pre_buffer_target = (device_sample_rate as usize * 7) / 10 * config.channels as usize;
     info!("[file] Pre-buffering {} samples...", pre_buffer_target);
 
     while audio_queue.lock().len() < pre_buffer_target {
@@ -253,7 +262,7 @@ pub fn play_file_internal(
     let mut last_spectrum_update = std::time::Instant::now();
 
     // Real FFT spectrum analyzer (RMS per Bark band, matching SpectrumSource)
-    let mut analyzer = RmsSpectrumAnalyzer::new(sample_rate, band_count);
+    let mut analyzer = RmsSpectrumAnalyzer::new(device_sample_rate, band_count);
     let mut spectrum_accum: VecDeque<f32> = VecDeque::with_capacity(4096);
 
     let initial_spectrum = vec![0.1f32; 16];

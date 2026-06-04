@@ -84,6 +84,15 @@ pub fn from_uri(
 ) -> Result<Box<dyn StreamSource>, PlaybackError> {
     let lower = uri.to_lowercase();
 
+    // Android content:// URIs are not supported — they require Android
+    // ContentResolver to open, which Rust's std::fs and Path::exists()
+    // cannot handle. Reject early before falling through to YouTube.
+    if lower.starts_with("content://") {
+        return Err(PlaybackError::UnsupportedScheme {
+            scheme: "content://".into(),
+        });
+    }
+
     let source: Box<dyn StreamSource> = if lower.contains("youtube.com") || lower.contains("youtu.be") {
         Box::new(youtube::YouTubeSource::new(uri, client, None)?)
     } else if uri.starts_with("http://") || uri.starts_with("https://") {

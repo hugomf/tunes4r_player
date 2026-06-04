@@ -16,44 +16,11 @@
 //! (coreaudio), Android (aaudio), Linux (alsa), and Windows (wasapi).
 
 use cpal::traits::DeviceTrait;
-use cpal::{SampleFormat, Stream, StreamConfig, SupportedStreamConfigRange};
+use cpal::{Stream, StreamConfig};
 use log::info;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-
-/// Device-agnostic view of a cpal `SupportedStreamConfigRange`.
-///
-/// cpal 0.17.3 keeps the fields of `SupportedStreamConfigRange`
-/// `pub(crate)`, which means callers can't construct one. This
-/// struct exposes the same shape with public fields, so the
-/// config-selection logic can be tested without a real device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ConfigRange {
-    pub channels: u16,
-    pub min_sample_rate: u32,
-    pub max_sample_rate: u32,
-    pub sample_format: SampleFormat,
-}
-
-impl ConfigRange {
-    /// Translate from cpal's `SupportedStreamConfigRange`. This is
-    /// the only place that needs to know the cpal struct exists;
-    /// everything else operates on `ConfigRange`.
-    pub fn from_cpal(c: SupportedStreamConfigRange) -> Self {
-        Self {
-            channels: c.channels(),
-            min_sample_rate: c.min_sample_rate(),
-            max_sample_rate: c.max_sample_rate(),
-            sample_format: c.sample_format(),
-        }
-    }
-
-    /// True iff `sample_rate` is within this config's supported range.
-    pub fn supports_sample_rate(&self, sample_rate: u32) -> bool {
-        self.min_sample_rate <= sample_rate && self.max_sample_rate >= sample_rate
-    }
-}
 
 /// Type alias for the shared ring buffer between the decode thread
 /// (producer) and the cpal callback (consumer).
@@ -65,73 +32,13 @@ pub type AudioBuffer = Arc<parking_lot::Mutex<VecDeque<f32>>>;
 /// Backward-compatible alias; `AudioBuffer` is the canonical name now.
 pub type AudioRing = AudioBuffer;
 
-/// Pick a cpal output config matching the decoded audio's sample rate
-/// and channel count, falling back to the device's default if no exact
-/// match is available.
+/// Use the device's default output config.
 ///
-/// Returns `None` if no config can be obtained (no outputs, or device
-/// reports no configs).
-pub fn pick_output_config(
-    device: &cpal::Device,
-    sample_rate: u32,
-    channels: u16,
-) -> Option<StreamConfig> {
-    if let Ok(configs) = device.supported_output_configs() {
-        let ranges: Vec<ConfigRange> = configs.map(ConfigRange::from_cpal).collect();
-        if let Some(cfg) = pick_output_config_from_ranges(&ranges, sample_rate, channels) {
-            return Some(cfg);
-        }
-    }
-
-    // Fall back to default config.
+/// The device's default config is *always* a valid combination that
+/// its audio stack (AAudio / CoreAudio) handles natively, so we use
+/// it directly and detect its sample rate for all timing.
+pub fn pick_output_config(device: &cpal::Device) -> Option<StreamConfig> {
     device.default_output_config().ok().map(|c| c.config())
-}
-
-/// Pure (device-free) version of the config selection logic.
-///
-/// Three-stage fallback, in order:
-///   1. Exact match: `channels` match AND `sample_rate` in the range,
-///      preferring F32 sample format (no per-sample quantization in the
-///      callback hot path).
-///   2. Sample-rate-only match: any config that supports `sample_rate`
-///      (accepts device's native channel count; resampling is a follow-up).
-///   3. `None` — the caller should fall back to the device's default.
-///
-/// Takes a slice of `ConfigRange` so it can be tested without a real
-/// device (cpal 0.17 keeps `SupportedStreamConfigRange`'s fields
-/// `pub(crate)`).
-pub fn pick_output_config_from_ranges(
-    configs: &[ConfigRange],
-    sample_rate: u32,
-    channels: u16,
-) -> Option<StreamConfig> {
-    // First try: exact channel match + sample rate in range.
-    if let Some(cfg) = configs
-        .iter()
-        .find(|c| c.channels == channels && c.supports_sample_rate(sample_rate))
-    {
-        // Prefer F32 to avoid per-sample quantization in the callback.
-        if cfg.sample_format == SampleFormat::F32 {
-            return Some(StreamConfig {
-                channels: cfg.channels,
-                sample_rate,
-                buffer_size: cpal::BufferSize::Default,
-            });
-        }
-    }
-    // Second try: sample rate matches, channels differ (accept
-    // the device's native channel count; resampling is a follow-up).
-    if let Some(cfg) = configs
-        .iter()
-        .find(|c| c.supports_sample_rate(sample_rate))
-    {
-        return Some(StreamConfig {
-            channels: cfg.channels,
-            sample_rate,
-            buffer_size: cpal::BufferSize::Default,
-        });
-    }
-    None
 }
 
 /// Build a cpal output stream that drains from `audio_ring`.
@@ -194,39 +101,23 @@ pub fn run_output_callback(
         return;
     }
     let mut queue = audio_ring.lock();
-    let mut count: u64 = 0;
+    let mut real_count: u64 = 0;
     for sample in data.iter_mut() {
-        *sample = queue.pop_front().unwrap_or(0.0);
-        count += 1;
+        if let Some(val) = queue.pop_front() {
+            *sample = val;
+            real_count += 1;
+        } else {
+            *sample = 0.0;
+        }
     }
-    if count > 0 {
-        samples_played.fetch_add(count, Ordering::Relaxed);
+    if real_count > 0 {
+        samples_played.fetch_add(real_count, Ordering::Relaxed);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Helper: build a single F32 ConfigRange covering a sample rate.
-    fn f32_range(channels: u16, min: u32, max: u32) -> ConfigRange {
-        ConfigRange {
-            channels,
-            min_sample_rate: min,
-            max_sample_rate: max,
-            sample_format: SampleFormat::F32,
-        }
-    }
-
-    /// Helper: build a single I16 ConfigRange covering a sample rate.
-    fn i16_range(channels: u16, min: u32, max: u32) -> ConfigRange {
-        ConfigRange {
-            channels,
-            min_sample_rate: min,
-            max_sample_rate: max,
-            sample_format: SampleFormat::I16,
-        }
-    }
 
     #[test]
     fn test_audio_ring_clone_shares_state() {
@@ -257,88 +148,6 @@ mod tests {
         let _ = _check;
     }
 
-    // ── pick_output_config_from_ranges ─────────────────────────────────
-
-    /// Exact match wins: F32, 2 ch, 44.1 kHz → returned with the
-    /// requested sample rate.
-    #[test]
-    fn test_pick_exact_match_f32_preferred() {
-        let configs = vec![f32_range(2, 44100, 44100)];
-        let cfg = pick_output_config_from_ranges(&configs, 44100, 2).expect("should match");
-        assert_eq!(cfg.channels, 2);
-        assert_eq!(cfg.sample_rate, 44100);
-    }
-
-    /// When the exact match exists but is I16 (not F32), the function
-    /// falls through to the second-stage sample-rate-only match, which
-    /// finds the same config and returns it (I16, not F32 — that's the
-    /// "prefer F32" soft preference, not a hard requirement).
-    #[test]
-    fn test_pick_exact_match_non_f32_falls_through_to_same_config() {
-        // Only one config available: I16 / 2 ch.
-        let configs = vec![i16_range(2, 44100, 44100)];
-        let cfg = pick_output_config_from_ranges(&configs, 44100, 2).expect("should match");
-        assert_eq!(cfg.channels, 2);
-        assert_eq!(cfg.sample_rate, 44100);
-    }
-
-    /// When both F32 (wrong channels) and F32 (right channels) exist,
-    /// the F32 right-channels one wins.
-    #[test]
-    fn test_pick_f32_right_channels_wins_over_f32_wrong_channels() {
-        let configs = vec![f32_range(1, 44100, 44100), f32_range(2, 44100, 44100)];
-        let cfg = pick_output_config_from_ranges(&configs, 44100, 2).expect("should match");
-        assert_eq!(cfg.channels, 2);
-    }
-
-    /// Second-stage fallback: no exact channel match, but a config
-    /// supports the sample rate → use it (device's native channel count).
-    #[test]
-    fn test_pick_sample_rate_only_fallback_accepts_different_channels() {
-        // Device only offers 1-channel output, decoded audio is stereo.
-        let configs = vec![f32_range(1, 44100, 44100)];
-        let cfg = pick_output_config_from_ranges(&configs, 44100, 2).expect("should match");
-        assert_eq!(cfg.channels, 1); // accepted device's native count
-        assert_eq!(cfg.sample_rate, 44100);
-    }
-
-    /// No config supports the requested sample rate → return None.
-    /// The caller is expected to fall back to `default_output_config()`.
-    #[test]
-    fn test_pick_no_support_returns_none() {
-        let configs = vec![f32_range(2, 48000, 96000)];
-        assert!(pick_output_config_from_ranges(&configs, 44100, 2).is_none());
-    }
-
-    /// Sample rate is on the edge of the supported range — should still match.
-    #[test]
-    fn test_pick_sample_rate_at_range_boundary() {
-        let configs = vec![f32_range(2, 8000, 44100)];
-        let cfg = pick_output_config_from_ranges(&configs, 44100, 2).expect("boundary match");
-        assert_eq!(cfg.sample_rate, 44100);
-        // Below the range — no match.
-        assert!(pick_output_config_from_ranges(&configs, 7999, 2).is_none());
-    }
-
-    /// `ConfigRange::supports_sample_rate` is the boundary check
-    /// (`min <= sr <= max`) used by the selection logic. Pin it down.
-    #[test]
-    fn test_config_range_supports_sample_rate_boundaries() {
-        let r = f32_range(2, 8000, 48000);
-        assert!(r.supports_sample_rate(8000));
-        assert!(r.supports_sample_rate(44100));
-        assert!(r.supports_sample_rate(48000));
-        assert!(!r.supports_sample_rate(7999));
-        assert!(!r.supports_sample_rate(48001));
-    }
-
-    /// Empty config list → None.
-    #[test]
-    fn test_pick_empty_configs_returns_none() {
-        let configs: Vec<ConfigRange> = vec![];
-        assert!(pick_output_config_from_ranges(&configs, 44100, 2).is_none());
-    }
-
     // ── run_output_callback ───────────────────────────────────────────
 
     fn make_ring() -> AudioRing {
@@ -365,10 +174,11 @@ mod tests {
     }
 
     /// Starvation: ring is empty but `buffer_ready` is true → output
-    /// silence, advance position so the UI keeps moving. The producer
-    /// is expected to catch up before any audible glitch.
+    /// silence, do NOT advance position (no real audio was consumed).
+    /// The back-pressure cap prevents unbounded queue growth on Android,
+    /// so starvation gaps are short and recoverable.
     #[test]
-    fn test_callback_silences_and_advances_when_ring_empty() {
+    fn test_callback_silences_and_does_not_advance_when_ring_empty() {
         let ring = make_ring();
         let ready = Arc::new(AtomicBool::new(true));
         let played = Arc::new(AtomicU64::new(0));
@@ -377,7 +187,7 @@ mod tests {
         run_output_callback(&mut data, &ring, &ready, &played);
 
         assert_eq!(data, [0.0; 8], "empty ring → silence");
-        assert_eq!(played.load(Ordering::Relaxed), 8, "still advances during starvation");
+        assert_eq!(played.load(Ordering::Relaxed), 0, "should NOT advance during starvation");
     }
 
     /// Happy path: ring has enough samples to fill the device buffer.
@@ -400,6 +210,7 @@ mod tests {
 
     /// Partial drain: ring has fewer samples than the device wants.
     /// Drains what's there, fills the rest with silence.
+    /// Only advances position for real samples.
     #[test]
     fn test_callback_partial_drain_fills_remainder_with_silence() {
         let ring = make_ring();
@@ -412,7 +223,7 @@ mod tests {
         run_output_callback(&mut data, &ring, &ready, &played);
 
         assert_eq!(data, [0.7, 0.8, 0.0, 0.0, 0.0, 0.0]);
-        assert_eq!(played.load(Ordering::Relaxed), 6, "advances by full buffer size");
+        assert_eq!(played.load(Ordering::Relaxed), 2, "advances only for real samples (2 of 6)");
     }
 
     /// Backpressure: ring has more samples than the device wants.
@@ -448,5 +259,100 @@ mod tests {
 
         assert_eq!(played.load(Ordering::Relaxed), 0);
         assert_eq!(ring.lock().len(), 1, "ring untouched on empty data");
+    }
+
+    // ── Prebuffer sizing ──────────────────────────────────────────────
+
+    /// Simulate the producer/consumer drain pattern that caused the
+    /// 30-second cutoff on Android.
+    ///
+    /// Scenario: the AAudio callback consumes samples at the device's
+    /// rate while the decode thread produces samples from a compressed
+    /// file. If the initial prebuffer is too small and the producer is
+    /// momentarily slower (thread scheduling, mutex contention), the
+    /// ring buffer empties and AAudio accumulates underruns. After
+    /// enough underruns AAudio disconnects the stream.
+    ///
+    /// This test proves that a larger prebuffer delays buffer exhaustion
+    /// proportionally, giving the decode thread more time to recover.
+    #[test]
+    fn test_prebuffer_delays_underrun_proportionally() {
+        // Simulate 44.1 kHz stereo: 256-frame callback = 512 samples
+        let callback_samples = 512usize;
+        // Simulate decode keeping up poorly: per callback cycle the
+        // producer adds 80 % of what the consumer drains.
+        let producer_yield = (callback_samples as f64 * 0.8) as usize;
+
+        // Helper: run a consumer/producer cycle and count callbacks
+        // until the buffer drops below the callback drain size (the
+        // low-water mark where the callback must write silence).
+        let cycles_until_low = |initial_samples: usize| -> u64 {
+            let ring: AudioRing = Arc::new(parking_lot::Mutex::new(VecDeque::new()));
+            // Pre-fill
+            for _ in 0..initial_samples {
+                ring.lock().push_back(0.5);
+            }
+            let mut cycles: u64 = 0;
+            loop {
+                let available = ring.lock().len();
+                // Stop when the buffer is too small for a full callback drain
+                if available <= callback_samples {
+                    return cycles;
+                }
+                // Consumer drains one callback buffer (or whatever's available)
+                for _ in 0..callback_samples.min(available) {
+                    ring.lock().pop_front();
+                }
+                // Producer refills (slower than consumer)
+                for _ in 0..producer_yield {
+                    ring.lock().push_back(0.5);
+                }
+                cycles += 1;
+            }
+        };
+
+        // 0.5 seconds of prebuffer at 44.1 kHz stereo = 44100 samples
+        let small_prebuffer = 44_100usize;
+        // 7 seconds = 617400 samples
+        let large_prebuffer = 617_400usize;
+
+        let small_cycles = cycles_until_low(small_prebuffer);
+        let large_cycles = cycles_until_low(large_prebuffer);
+
+        // The large prebuffer should sustain ~14× more cycles (ratio
+        // matches 7.0 / 0.5 = 14), proving the principle.
+        assert!(
+            large_cycles > small_cycles * 10,
+            "large prebuffer ({} cycles) should last >10× small prebuffer ({} cycles)",
+            large_cycles,
+            small_cycles,
+        );
+    }
+
+    /// Like the test above, but with the producer matching the consumer
+    /// rate (no decode lag). Even a small prebuffer should never empty
+    /// when the producer keeps up.
+    #[test]
+    fn test_prebuffer_stable_when_producer_keeps_up() {
+        let callback_samples = 512usize;
+        let ring: AudioRing = Arc::new(parking_lot::Mutex::new(VecDeque::new()));
+        // Tiny initial buffer (just 1 callback)
+        for _ in 0..callback_samples {
+            ring.lock().push_back(0.5);
+        }
+        let ready = Arc::new(AtomicBool::new(true));
+        let played = Arc::new(AtomicU64::new(0));
+
+        // Run 10 000 callback cycles with the producer matching the
+        // consumer rate (1:1). The buffer should never empty.
+        for _ in 0..10_000 {
+            let mut data = vec![0.0f32; callback_samples];
+            run_output_callback(&mut data, &ring, &ready, &played);
+            // Producer replaces exactly what was consumed
+            for _ in 0..callback_samples {
+                ring.lock().push_back(0.5);
+            }
+            assert!(!ring.lock().is_empty(), "buffer should never empty when producer keeps up");
+        }
     }
 }

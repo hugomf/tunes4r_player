@@ -537,6 +537,22 @@ impl PlaybackEngine {
                         );
                     });
                     self.playback_handle = Some(handle);
+
+                    // Wait for prebuffer to complete (same as play_file)
+                    let seek_start = std::time::Instant::now();
+                    while !self.buffer_ready.load(Ordering::Relaxed)
+                        && seek_start.elapsed() < Duration::from_secs(5)
+                    {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    if !self.buffer_ready.load(Ordering::Relaxed) {
+                        let err = self.load_error.lock().clone();
+                        if err.is_empty() {
+                            warn!("[engine] Seek prebuffer failed to start within timeout");
+                        } else {
+                            error!("[engine] Seek prebuffer error: {}", err);
+                        }
+                    }
                 }
                 PlaybackType::Pipe { url: _, .. } => {
                     // For pipes, we need to restart both the fetch and decode threads
@@ -671,15 +687,21 @@ impl PlaybackEngine {
     /// Skips forward by milliseconds.
     pub fn skip_forward(&mut self, ms: u64) -> Result<(), PlaybackError> {
         info!("[engine] Skipping forward {} ms", ms);
-        let new_position = self.position.current_ms + ms;
+        let current = self.get_position().current_ms;
+        let total = self.total_duration_ms.load(Ordering::Relaxed);
+        let new_position = if total > 0 {
+            (current + ms).min(total.saturating_sub(500))
+        } else {
+            current + ms
+        };
         self.seek(new_position)
     }
 
     /// Skips backward by milliseconds.
     pub fn skip_backward(&mut self, ms: u64) -> Result<(), PlaybackError> {
         info!("[engine] Skipping backward {} ms", ms);
-        let new_position = self.position.current_ms.saturating_sub(ms);
-        self.seek(new_position)
+        let current = self.get_position().current_ms;
+        self.seek(current.saturating_sub(ms))
     }
 
     /// Sets the volume (0.0 to 1.0).

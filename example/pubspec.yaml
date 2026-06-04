@@ -13,3 +13,7 @@ dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/music.mp3
+    - assets/music2.mp3

@@ -434,7 +434,6 @@ pub fn decode_and_play_from_read(
         let pq = audio_queue.clone();
         let br = buffer_ready.clone();
         let sp = samples_played.clone();
-        let cbs = callback_spectrum_buf.clone();
         device
             .build_output_stream(
                 cfg,
@@ -453,11 +452,6 @@ pub fn decode_and_play_from_read(
                     }
                     if count > 0 {
                         sp.fetch_add(count as u64, Ordering::Relaxed);
-                    }
-                    if let Some(mut buf) = cbs.try_lock() {
-                        let len = data.len().min(4096);
-                        buf.clear();
-                        buf.extend_from_slice(&data[..len]);
                     }
                 },
                 |err| error!("[stream] Audio output error: {}", err),
