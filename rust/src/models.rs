@@ -3,6 +3,10 @@
 //! These are pure data structures with no business logic.
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::io::Read;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Domain model for a song
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -161,5 +165,505 @@ impl PlaybackPosition {
         } else {
             self.current_ms as f32 / self.total_ms as f32
         }
+    }
+}
+
+/// C-compatible event emitted by the engine and consumed via FFI.
+/// `int_param` carries the event's numeric payload (state value, position ms, etc.).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct EngineEvent {
+    pub event_type: i32,
+    pub int_param: i64,
+}
+
+pub const ENGINE_EVENT_NONE: i32 = 0;
+pub const ENGINE_EVENT_STATE_CHANGED: i32 = 1;
+pub const ENGINE_EVENT_SEEK_STARTED: i32 = 2;
+pub const ENGINE_EVENT_SEEK_COMPLETED: i32 = 3;
+pub const ENGINE_EVENT_END_OF_STREAM: i32 = 4;
+pub const ENGINE_EVENT_POSITION_RESET: i32 = 5;
+pub const ENGINE_EVENT_ERROR: i32 = 6;
+pub const ENGINE_EVENT_SEEK_QUEUED: i32 = 7;
+
+/// Download buffer state for progressive streams (YouTube, HTTP).
+/// Tells the UI which range of the timeline has been downloaded and
+/// can therefore be seeked into immediately.
+///
+/// `start_ms`     — playback position corresponding to the first buffered byte
+/// Sliding-window ring buffer state for progressive streams (YouTube, HTTP).
+///
+/// The buffer is a fixed-size window that slides along the file as playback
+/// progresses. The downloader fills ahead of the playhead up to
+/// `capacity_ms`; older data is discarded.
+///
+/// Fields (all in milliseconds, file-relative):
+/// - `capacity_ms`   — fixed ring size (e.g. 30 000 = 30 s of audio)
+/// - `read_offset_ms` — playhead position in the file (= current position)
+/// - `write_offset_ms` — how far into the file the downloader has reached
+/// - `total_ms`       — total file duration (0 until known)
+/// - `is_complete`    — true once `write_offset_ms >= total_ms`
+///
+/// The data available to the decoder is the window
+/// `[read_offset_ms, read_offset_ms + min(capacity_ms, write_offset_ms - read_offset_ms)]`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdaptiveRingBuffer {
+    pub capacity_ms: u64,
+    pub read_offset_ms: u64,
+    pub write_offset_ms: u64,
+    pub total_ms: u64,
+    pub is_complete: bool,
+}
+
+impl Default for AdaptiveRingBuffer {
+    fn default() -> Self {
+        Self {
+            capacity_ms: 30_000,
+            read_offset_ms: 0,
+            write_offset_ms: 0,
+            total_ms: 0,
+            is_complete: false,
+        }
+    }
+}
+
+impl AdaptiveRingBuffer {
+    /// Position (in file ms) of the last buffered byte relative to the
+    /// file start. This is where the decoder can read up to.
+    pub fn end_ms(&self) -> u64 {
+        self.read_offset_ms + self.available_ms()
+    }
+
+    /// UI-safe end position: never reads as less than the playhead.
+    ///
+    /// Between buffer poller ticks, the playhead can advance beyond the
+    /// last known buffer end (e.g. the downloader is briefly behind, or
+    /// the position stream polls at 60Hz but the buffer stream at 26Hz).
+    /// Exposing the raw `end_ms()` to the UI would let the "buffered"
+    /// region on the slider appear to lag behind the playhead thumb.
+    ///
+    /// This method clamps the result to `>= read_offset_ms` so the
+    /// invariant `buffered_end >= playhead` holds by construction.
+    /// Callers should use this for all UI-facing values.
+    pub fn end_ms_clamped(&self) -> u64 {
+        self.end_ms().max(self.read_offset_ms)
+    }
+
+    /// How many ms of audio are currently in the ring buffer, clamped
+    /// to `[0, capacity_ms]`. Returns `total_ms` if the file is complete.
+    pub fn available_ms(&self) -> u64 {
+        if self.is_complete && self.total_ms > 0 {
+            // File is fully downloaded; everything from playhead to end
+            // is available, regardless of ring capacity.
+            self.total_ms.saturating_sub(self.read_offset_ms)
+        } else if self.write_offset_ms > self.read_offset_ms {
+            let filled = self.write_offset_ms - self.read_offset_ms;
+            filled.min(self.capacity_ms)
+        } else {
+            0
+        }
+    }
+}
+
+/// Backwards-compat alias during the rename. New code should use
+/// [`AdaptiveRingBuffer`].
+pub type DownloadBuffer = AdaptiveRingBuffer;
+
+/// A thread-safe byte ring buffer for caching live stream audio data.
+///
+/// Bytes are pushed sequentially and the buffer wraps around when it
+/// reaches `max_bytes`. This allows seeking backward within the cached
+/// window. The `total_written` counter gives the absolute byte position
+/// of the last written byte, enabling offset calculations.
+pub struct LiveByteRing {
+    data: VecDeque<u8>,
+    max_bytes: usize,
+    total_written: u64,
+}
+
+impl LiveByteRing {
+    pub fn new(cache_max_ms: u64, avg_bitrate: u32) -> Self {
+        // Estimate max_bytes from duration × bitrate (128 kbps default).
+        let bytes_per_ms = (avg_bitrate.max(128_000) / 8) as u64;
+        let max_bytes = (cache_max_ms * bytes_per_ms) as usize;
+        Self {
+            data: VecDeque::with_capacity(max_bytes.min(100_000_000)),
+            max_bytes,
+            total_written: 0,
+        }
+    }
+
+    /// Push bytes into the ring buffer, evicting oldest data as needed.
+    pub fn push(&mut self, buf: &[u8]) {
+        for &b in buf {
+            if self.data.len() >= self.max_bytes {
+                self.data.pop_front();
+            }
+            self.data.push_back(b);
+        }
+        self.total_written = self.total_written.wrapping_add(buf.len() as u64);
+    }
+
+    /// Total bytes written since the stream started (may wrap).
+    pub fn total_written(&self) -> u64 {
+        self.total_written
+    }
+
+    /// Current number of bytes in the ring buffer.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Read bytes from `offset` bytes before the write head.
+    /// `offset` is measured from `total_written`.
+    pub fn read_at(&self, abs_offset: u64, buf: &mut [u8]) -> usize {
+        if self.data.is_empty() {
+            return 0;
+        }
+        let ring_len = self.data.len() as u64;
+        let start = if abs_offset >= self.total_written {
+            return 0; // past the write head
+        } else if self.total_written - abs_offset > ring_len {
+            0 // data was evicted
+        } else {
+            (ring_len - (self.total_written - abs_offset)) as usize
+        };
+        let available = self.data.len() - start;
+        let to_read = buf.len().min(available);
+        for (i, b) in self.data.range(start..start + to_read).enumerate() {
+            buf[i] = *b;
+        }
+        to_read
+    }
+
+    /// Returns a contiguous slice of all cached bytes (for seeking).
+    pub fn as_slice(&self) -> Vec<u8> {
+        self.data.iter().copied().collect()
+    }
+}
+
+/// A Read implementation over a shared LiveByteRing, positioned at a
+/// specific absolute byte offset. Used by the decode thread after a seek.
+pub struct LiveByteReader {
+    ring: Arc<Mutex<LiveByteRing>>,
+    read_offset: u64,
+    exhausted: bool,
+}
+
+impl LiveByteReader {
+    pub fn new(ring: Arc<Mutex<LiveByteRing>>, abs_offset: u64) -> Self {
+        Self {
+            ring,
+            read_offset: abs_offset,
+            exhausted: false,
+        }
+    }
+}
+
+impl Read for LiveByteReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.exhausted {
+            return Ok(0);
+        }
+        let ring = self.ring.lock().unwrap();
+        let n = ring.read_at(self.read_offset, buf);
+        if n > 0 {
+            self.read_offset += n as u64;
+        } else {
+            drop(ring);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let ring = self.ring.lock().unwrap();
+            let n = ring.read_at(self.read_offset, buf);
+            if n > 0 {
+                self.read_offset += n as u64;
+                return Ok(n);
+            }
+            self.exhausted = true;
+            return Ok(0);
+        }
+        Ok(n)
+    }
+}
+
+/// A Read wrapper that caches all bytes read into a LiveByteRing.
+/// Used by `play_live_internal` to simultaneously feed the decoder
+/// and fill the ring buffer for backward seek.
+pub struct LiveByteCacheReader<R: Read> {
+    inner: R,
+    ring: Arc<Mutex<LiveByteRing>>,
+}
+
+impl<R: Read> LiveByteCacheReader<R> {
+    pub fn new(inner: R, ring: Arc<Mutex<LiveByteRing>>) -> Self {
+        Self { inner, ring }
+    }
+}
+
+impl<R: Read> Read for LiveByteCacheReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            let mut ring = self.ring.lock().unwrap();
+            ring.push(&buf[..n]);
+        }
+        Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Default ─────────────────────────────────────────────────────
+
+    #[test]
+    fn default_is_empty_with_30s_capacity() {
+        let buf = AdaptiveRingBuffer::default();
+        assert_eq!(buf.capacity_ms, 30_000);
+        assert_eq!(buf.read_offset_ms, 0);
+        assert_eq!(buf.write_offset_ms, 0);
+        assert_eq!(buf.total_ms, 0);
+        assert!(!buf.is_complete);
+        assert_eq!(buf.available_ms(), 0);
+        assert_eq!(buf.end_ms(), 0);
+    }
+
+    // ── available_ms / end_ms: download in progress ────────────────
+
+    #[test]
+    fn available_ms_partial_download_within_capacity() {
+        // 60s file, playhead at 0, downloaded 20s, capacity 30s.
+        // Available = min(capacity, write - read) = min(30000, 20000) = 20000.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 0,
+            write_offset_ms: 20_000,
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        assert_eq!(buf.available_ms(), 20_000);
+        assert_eq!(buf.end_ms(), 20_000);
+    }
+
+    #[test]
+    fn available_ms_clamps_to_capacity() {
+        // Downloaded more than capacity: ring is full.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 15_000,
+            read_offset_ms: 0,
+            write_offset_ms: 50_000,
+            total_ms: 120_000,
+            is_complete: false,
+        };
+        assert_eq!(buf.available_ms(), 15_000);
+        assert_eq!(buf.end_ms(), 15_000);
+    }
+
+    #[test]
+    fn available_ms_playhead_inside_buffered_region() {
+        // Playhead at 10s, download reached 25s, capacity 30s.
+        // Available = min(30000, 25000-10000) = 15000.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 10_000,
+            write_offset_ms: 25_000,
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        assert_eq!(buf.available_ms(), 15_000);
+        assert_eq!(buf.end_ms(), 25_000);
+    }
+
+    #[test]
+    fn available_ms_write_behind_read_means_empty() {
+        // Should never happen in practice (write is monotonic), but
+        // the code must not panic or wrap around.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 20_000,
+            write_offset_ms: 5_000,
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        assert_eq!(buf.available_ms(), 0);
+    }
+
+    // ── available_ms: complete download ─────────────────────────────
+
+    #[test]
+    fn available_ms_complete_returns_remaining_duration() {
+        // File complete: available = total - read, regardless of capacity.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 8_000, // tiny capacity
+            read_offset_ms: 50_000,
+            write_offset_ms: 120_000,
+            total_ms: 120_000,
+            is_complete: true,
+        };
+        // 120_000 - 50_000 = 70_000 (not clamped to 8_000)
+        assert_eq!(buf.available_ms(), 70_000);
+        assert_eq!(buf.end_ms(), 120_000);
+    }
+
+    #[test]
+    fn available_ms_complete_at_end_of_file() {
+        // Playhead at the end: available = 0.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 120_000,
+            write_offset_ms: 120_000,
+            total_ms: 120_000,
+            is_complete: true,
+        };
+        assert_eq!(buf.available_ms(), 0);
+        assert_eq!(buf.end_ms(), 120_000);
+    }
+
+    // ── Ring buffer sliding behavior ────────────────────────────────
+
+    #[test]
+    fn ring_slides_with_playhead() {
+        // Simulate playback advancing while download continues.
+        // Capacity 30s, total 120s.
+        let mut buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 0,
+            write_offset_ms: 30_000,
+            total_ms: 120_000,
+            is_complete: false,
+        };
+        // Initial: 30s buffered.
+        assert_eq!(buf.available_ms(), 30_000);
+
+        // Playhead advances 10s, download advances 10s.
+        buf.read_offset_ms = 10_000;
+        buf.write_offset_ms = 40_000;
+        assert_eq!(buf.available_ms(), 30_000);
+        assert_eq!(buf.end_ms(), 40_000);
+
+        // Playhead advances 10s, download stalls.
+        buf.read_offset_ms = 20_000;
+        buf.write_offset_ms = 40_000;
+        assert_eq!(buf.available_ms(), 20_000);
+        assert_eq!(buf.end_ms(), 40_000);
+
+        // Playhead advances past the downloaded region (seek-forward).
+        buf.read_offset_ms = 40_000;
+        buf.write_offset_ms = 40_000;
+        assert_eq!(buf.available_ms(), 0);
+    }
+
+    // ── Equality ────────────────────────────────────────────────────
+
+    #[test]
+    fn two_buffers_with_same_state_are_equal() {
+        let a = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 5_000,
+            write_offset_ms: 20_000,
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        let b = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 5_000,
+            write_offset_ms: 20_000,
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn two_buffers_differing_in_one_field_are_unequal() {
+        let a = AdaptiveRingBuffer::default();
+        let mut b = a;
+        b.write_offset_ms = 1;
+        assert_ne!(a, b);
+    }
+
+    // ── FFI compatibility: #[repr(C)] ──────────────────────────────
+
+    #[test]
+    fn repr_c_field_order_matches_dart_binding() {
+        // AdaptiveRingBufferStruct in tunes4r_player_ffi.dart must read
+        // these fields in the same order. If you reorder fields here,
+        // update the Dart side too.
+        use std::mem;
+        assert_eq!(mem::offset_of!(AdaptiveRingBuffer, capacity_ms), 0);
+        assert_eq!(mem::offset_of!(AdaptiveRingBuffer, read_offset_ms), 8);
+        assert_eq!(mem::offset_of!(AdaptiveRingBuffer, write_offset_ms), 16);
+        assert_eq!(mem::offset_of!(AdaptiveRingBuffer, total_ms), 24);
+        assert_eq!(mem::offset_of!(AdaptiveRingBuffer, is_complete), 32);
+    }
+
+    // ── end_ms_clamped: UI invariant (end >= read_offset) ───────────
+
+    #[test]
+    fn end_ms_clamped_never_less_than_playhead_when_downloader_lags() {
+        // The downloader is briefly behind the playhead. The raw end_ms
+        // would equal write_offset (clamped to read_offset), so they're
+        // equal here — but if a stale buffer snapshot arrives at the UI
+        // (e.g. between poller ticks), end_ms_clamped must still hold
+        // the invariant.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 25_000, // playhead at 25s
+            write_offset_ms: 25_000, // downloader just at playhead
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        assert!(buf.end_ms_clamped() >= buf.read_offset_ms);
+    }
+
+    #[test]
+    fn end_ms_clamped_holds_across_simulated_playback() {
+        // Simulate a full playback session: downloader falls behind,
+        // catches up, falls behind again. The clamped value must never
+        // read as less than the playhead.
+        let mut buf = AdaptiveRingBuffer {
+            capacity_ms: 15_000,
+            read_offset_ms: 0,
+            write_offset_ms: 0,
+            total_ms: 120_000,
+            is_complete: false,
+        };
+
+        for tick in 0..600u64 {
+            // Playhead advances ~100ms per tick (60s of playback in 600 ticks).
+            let playhead: u64 = tick * 100;
+            // Downloader alternates between ahead and behind the playhead.
+            let downloader_ahead: u64 = match tick % 4 {
+                0 | 1 => playhead + 2_000, // ahead
+                2 => playhead + 500,        // slightly ahead
+                _ => playhead.saturating_sub(500), // behind
+            };
+            buf.read_offset_ms = playhead.min(buf.total_ms);
+            buf.write_offset_ms = downloader_ahead.max(buf.read_offset_ms).min(buf.total_ms);
+
+            // The UI-facing invariant.
+            assert!(
+                buf.end_ms_clamped() >= buf.read_offset_ms,
+                "tick {}: end_ms_clamped={} < read_offset_ms={}",
+                tick,
+                buf.end_ms_clamped(),
+                buf.read_offset_ms
+            );
+        }
+    }
+
+    #[test]
+    fn end_ms_clamped_equals_end_ms_when_downloader_is_ahead() {
+        // Normal streaming: downloader well ahead of playhead.
+        let buf = AdaptiveRingBuffer {
+            capacity_ms: 30_000,
+            read_offset_ms: 5_000,
+            write_offset_ms: 20_000,
+            total_ms: 60_000,
+            is_complete: false,
+        };
+        assert_eq!(buf.end_ms_clamped(), buf.end_ms());
+        assert_eq!(buf.end_ms_clamped(), 20_000);
     }
 }

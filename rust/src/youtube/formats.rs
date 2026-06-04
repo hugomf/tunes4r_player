@@ -65,6 +65,8 @@ pub struct StreamFormat {
     pub quality: VideoQuality,
     pub audio_quality: AudioQuality,
     pub url: String,
+    /// Duration in milliseconds, from approxDurationMs in streaming data
+    pub approx_duration_ms: Option<u64>,
 }
 
 impl StreamFormat {

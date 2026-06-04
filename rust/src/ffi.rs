@@ -9,10 +9,14 @@ use log::{error, info};
 use crate::audio::engine::types::GLOBAL_SPECTRUM;
 use crate::audio::{PlaybackEngine, PlaybackError};
 use crate::dsp::SpectrumAnalyzer;
-use crate::models::{PlaybackPosition, PlaybackState, SpectrumData};
+use crate::models::{
+    DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState, SpectrumData,
+};
+use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 // Simple stderr logger for non-Android platforms.
 #[cfg(not(target_os = "android"))]
@@ -21,24 +25,74 @@ struct StderrLogger;
 #[cfg(not(target_os = "android"))]
 impl log::Log for StderrLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Info
+        // Capture Debug, Info, Warn, and Error so error paths that use
+        // `debug!` (e.g. stream-format failures) still surface in the
+        // Flutter log output. Without this, errors stored in
+        // `load_error` and shown in the UI would be invisible in logs.
+        metadata.level() <= log::Level::Debug
     }
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            eprintln!("{}", record.args());
+            // Prefix with level so logs are easy to grep.
+            let level = record.level();
+            let msg = format!("[{}] {}", level, record.args());
+            eprintln!("{}", msg);
+            // Also push to a ring buffer that the Dart UI can read via
+            // FFI, so log messages are visible even when stderr is
+            // not captured (e.g. GUI apps on macOS, release builds).
+            LOG_BUFFER.push(&msg);
         }
     }
 
     fn flush(&self) {}
 }
 
+/// Ring buffer of the most recent log messages, exposed to the Dart
+/// side via FFI. Useful for debugging when stderr is not captured
+/// (e.g. `flutter run` without `--verbose`, release builds, GUI apps
+/// on macOS where stderr goes to the system log).
+#[cfg(not(target_os = "android"))]
+struct LogRingBuffer {
+    entries: parking_lot::Mutex<VecDeque<String>>,
+    capacity: usize,
+}
+
+#[cfg(not(target_os = "android"))]
+impl LogRingBuffer {
+    const fn new() -> Self {
+        Self {
+            entries: parking_lot::Mutex::new(VecDeque::new()),
+            capacity: 200,
+        }
+    }
+
+    fn push(&self, msg: &str) {
+        let mut entries = self.entries.lock();
+        if entries.len() >= self.capacity {
+            entries.pop_front();
+        }
+        entries.push_back(msg.to_string());
+    }
+
+    fn snapshot(&self) -> Vec<String> {
+        self.entries.lock().iter().cloned().collect()
+    }
+
+    fn clear(&self) {
+        self.entries.lock().clear();
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+static LOG_BUFFER: LogRingBuffer = LogRingBuffer::new();
+
 #[cfg(not(target_os = "android"))]
 fn init_logger() {
     use log::LevelFilter;
     static LOGGER: StderrLogger = StderrLogger;
     log::set_logger(&LOGGER).ok();
-    log::set_max_level(LevelFilter::Info);
+    log::set_max_level(LevelFilter::Debug);
 }
 
 // ============================================================================
@@ -155,19 +209,19 @@ pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPl
 
 /// Opaque handle to the audio engine
 pub struct AudioEngineHandle {
-    playback: RwLock<PlaybackEngine>,
+    playback: Arc<RwLock<PlaybackEngine>>,
     spectrum: RwLock<SpectrumAnalyzer>,
 }
 
 impl AudioEngineHandle {
     fn new() -> Result<Self, PlaybackError> {
         Ok(Self {
-            playback: RwLock::new(PlaybackEngine::new_without_device()?),
+            playback: Arc::new(RwLock::new(PlaybackEngine::new_without_device()?)),
             spectrum: RwLock::new(SpectrumAnalyzer::default()),
         })
     }
 
-    pub fn playback(&self) -> &RwLock<PlaybackEngine> {
+    pub fn playback(&self) -> &Arc<RwLock<PlaybackEngine>> {
         &self.playback
     }
 }
@@ -241,45 +295,75 @@ pub extern "C" fn audio_engine_set_spectrum_band_count_global(count: i32) {
 ///
 /// # Safety
 /// The uri must be a valid null-terminated UTF-8 string.
+///
+/// `buffer_size_ms` — fixed ring buffer capacity in ms, or -1 for adaptive
+/// (sized automatically based on connection speed).
 #[no_mangle]
 pub unsafe extern "C" fn audio_engine_play(
     handle: *mut AudioEngineHandle,
     uri: *const c_char,
+    buffer_size_ms: i64,
 ) -> i32 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || uri.is_null() {
-            return -1;
-        }
+    use std::thread;
 
-        let handle = &*handle;
-        let uri = match CStr::from_ptr(uri).to_str() {
-            Ok(s) => s,
-            Err(_) => return -2,
-        };
+    // Validate inputs first.
+    if handle.is_null() || uri.is_null() {
+        return -1;
+    }
+    let uri_str = match CStr::from_ptr(uri).to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => return -2,
+    };
 
-        match handle.playback.write().unwrap().play(uri) {
-            Ok(()) => 0,
-            Err(e) => {
-                error!("[ffi] audio_engine_play error: {}", e);
-                -3
-            }
-        }
-    }));
+    let h = &*handle;
+    let playback = h.playback.clone();
 
-    match result {
-        Ok(code) => code,
-        Err(panic_info) => {
-            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                s.to_string()
-            } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                s.clone()
+    // Set state to Connecting IMMEDIATELY so the UI can show a
+    // "Resolving..." spinner without waiting for YouTube CDN resolution.
+    {
+        if let Ok(mut engine) = playback.write() {
+            engine.set_state(PlaybackState::Connecting);
+            engine.reset_download_buffer();
+            // Set buffer size: -1 = adaptive, >=0 = fixed capacity
+            let buf = if buffer_size_ms >= 0 {
+                buffer_size_ms as u64
             } else {
-                "Unknown panic".to_string()
+                0
             };
-            error!("[ffi] PANIC in audio_engine_play: {}", msg);
-            -99
+            engine.buffer_size_ms_fixed.store(buf, Ordering::Relaxed);
         }
     }
+
+    // Clone the http_client (needed for YouTube resolution).
+    let http_client = match playback.read() {
+        Ok(engine) => engine.http_client.clone(),
+        Err(_) => return -3,
+    };
+
+    // Spawn a background thread to do the blocking YouTube resolution.
+    // The FFI returns immediately, so the Dart UI thread is never blocked.
+    thread::spawn(move || {
+        use crate::audio::stream::source;
+        let result = source::from_uri(&uri_str, http_client, None);
+        match result {
+            Ok(pipeline) => {
+                if let Ok(mut engine) = playback.write() {
+                    if let Err(e) = engine.play_pipeline(pipeline) {
+                        error!("[ffi] play_pipeline error: {}", e);
+                        engine.set_state(PlaybackState::Error(e.to_string()));
+                    }
+                }
+            }
+            Err(e) => {
+                error!("[ffi] from_uri error: {}", e);
+                if let Ok(mut engine) = playback.write() {
+                    engine.set_state(PlaybackState::Error(e.to_string()));
+                }
+            }
+        }
+    });
+
+    0
 }
 
 /// Check whether the current playback source supports seeking.
@@ -800,6 +884,97 @@ pub extern "C" fn audio_engine_get_position(handle: *const AudioEngineHandle) ->
         }
 
         unsafe { &*handle }.playback.read().unwrap().get_position()
+    }));
+
+    result.unwrap_or_default()
+}
+
+/// Get the current download buffer state. Tells the UI which range of the
+/// timeline has been downloaded and can therefore be seeked into
+/// immediately. For local files the buffer is reported as
+/// `(0, total_ms, total_ms, is_complete: true)`.
+#[no_mangle]
+pub extern "C" fn audio_engine_get_download_buffer(
+    handle: *const AudioEngineHandle,
+) -> DownloadBuffer {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if handle.is_null() {
+            return DownloadBuffer::default();
+        }
+
+        let mut buf = unsafe { &*handle }.playback.read().unwrap().get_download_buffer();
+        // Enforce the UI invariant: the buffered region can never read as
+        // less than the playhead. The buffer poller already clamps
+        // write_offset to read_offset, but a stale snapshot from a prior
+        // tick could still expose a write_offset < read_offset if the
+        // playhead advanced between snapshots. Clamp here so the Dart
+        // side can never display a buffer that lags the playhead.
+        if buf.write_offset_ms < buf.read_offset_ms {
+            buf.write_offset_ms = buf.read_offset_ms;
+        }
+        buf
+    }));
+
+    result.unwrap_or_default()
+}
+
+/// Return the most recent log messages (up to 200). The buffer is a
+/// ring — older messages are dropped as new ones arrive. Useful for
+/// debugging when stderr is not captured by the host (e.g. GUI apps,
+/// release builds, `flutter run` without `--verbose`).
+///
+/// `out_buf` must be a pointer to at least `out_buf_len` bytes. On
+/// return, the buffer is null-terminated. Returns the number of bytes
+/// written (excluding the null terminator), or -1 if the buffer is
+/// too small.
+#[cfg(not(target_os = "android"))]
+#[no_mangle]
+pub extern "C" fn audio_engine_get_logs(
+    out_buf: *mut c_char,
+    out_buf_len: usize,
+) -> i32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let snapshot = LOG_BUFFER.snapshot();
+        if snapshot.is_empty() {
+            if out_buf_len > 0 {
+                unsafe { *out_buf = 0; }
+            }
+            return 0;
+        }
+        // Join with newlines so the Dart side can split on '\n'.
+        let joined = snapshot.join("\n");
+        let bytes = joined.as_bytes();
+        if bytes.len() + 1 > out_buf_len {
+            return -1; // buffer too small
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf as *mut u8, bytes.len());
+            *out_buf.add(bytes.len()) = 0; // null terminator
+        }
+        bytes.len() as i32
+    }));
+
+    result.unwrap_or(-1)
+}
+
+/// Clear the log ring buffer.
+#[cfg(not(target_os = "android"))]
+#[no_mangle]
+pub extern "C" fn audio_engine_clear_logs() {
+    LOG_BUFFER.clear();
+}
+
+/// Pop the next engine event from the queue. Returns
+/// `EngineEvent { event_type: 0, ... }` (NONE) when the queue is empty.
+/// `event_type` values are defined as `ENGINE_EVENT_*` constants in `models.rs`.
+#[no_mangle]
+pub extern "C" fn audio_engine_poll_event(handle: *const AudioEngineHandle) -> EngineEvent {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if handle.is_null() {
+            return EngineEvent::default();
+        }
+
+        unsafe { &*handle }.playback.read().unwrap().poll_event()
     }));
 
     result.unwrap_or_default()
@@ -1392,6 +1567,36 @@ pub unsafe extern "C" fn audio_engine_play_stream_with_downloader(
         }
     }));
 
+    result.unwrap_or(-99)
+}
+
+/// Play a live internet stream with backward seek support.
+///
+/// `cache_max_ms` controls how many milliseconds of audio are kept
+/// in the ring buffer for seeking backward.
+#[no_mangle]
+pub unsafe extern "C" fn audio_engine_play_live(
+    handle: *mut AudioEngineHandle,
+    url: *const c_char,
+    cache_max_ms: u64,
+) -> i32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if handle.is_null() || url.is_null() {
+            return -1;
+        }
+        let url_str = match CStr::from_ptr(url).to_str() {
+            Ok(s) => s,
+            Err(_) => return -2,
+        };
+        let engine = unsafe { &mut *handle };
+        match engine.playback.write().unwrap().play_live(url_str, cache_max_ms) {
+            Ok(()) => 0,
+            Err(e) => {
+                error!("[ffi] audio_engine_play_live failed: {}", e);
+                -3
+            }
+        }
+    }));
     result.unwrap_or(-99)
 }
 

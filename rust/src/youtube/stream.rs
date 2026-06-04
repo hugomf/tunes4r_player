@@ -48,6 +48,10 @@ struct Format {
     /// Audio sample rate.
     #[allow(dead_code)]
     audio_sample_rate: Option<String>,
+    /// Approximate duration from streaming data (string or number)
+    #[serde(rename = "approxDurationMs", deserialize_with = "crate::youtube::extractor::deserialize_f64_from_string")]
+    #[allow(dead_code)]
+    approx_duration_ms: Option<f64>,
 }
 
 impl Format {
@@ -131,6 +135,7 @@ fn build_client_request(
     client: &crate::youtube::client::YtClient,
     video_id: &str,
     watch_data: &WatchData,
+    po_token: Option<&str>,
 ) -> Result<reqwest::blocking::RequestBuilder, String> {
     let mut client_map = serde_json::json!({
         "clientName": client.name,
@@ -145,6 +150,10 @@ fn build_client_request(
             for (k, v) in extra {
                 obj.insert(k.clone(), v.clone());
             }
+        }
+        // yt-dlp includes userAgent in the API request body client context
+        if let Some(ua) = &client.user_agent {
+            obj.insert("userAgent".to_string(), serde_json::Value::String(ua.clone()));
         }
     }
 
@@ -170,6 +179,16 @@ fn build_client_request(
             for (k, v) in extra {
                 obj.insert(k.clone(), v.clone());
             }
+        }
+    }
+
+    // Include PoToken in request body like yt-dlp:
+    // yt_query['serviceIntegrityDimensions'] = {'poToken': po_token}
+    if let Some(pot) = po_token {
+        if !pot.is_empty() {
+            body["serviceIntegrityDimensions"] = serde_json::json!({
+                "poToken": pot
+            });
         }
     }
 
@@ -289,17 +308,9 @@ pub fn get_audio_stream_url(
     }
 
     // ── Step 3: Try each InnerTube client ──
+    let po_token = service.po_token().map(|s| s.as_str());
     for yt_client in get_yt_clients().iter() {
-        // Skip clients that require PoToken (not implemented)
-        if yt_client.requires_pot {
-            eprintln!(
-                "[youtube] Skipping {} (requires PoToken)",
-                yt_client.name
-            );
-            continue;
-        }
-
-        let request = build_client_request(yt_client, video_id, &watch_data)
+        let request = build_client_request(yt_client, video_id, &watch_data, po_token)
             .map_err(|e| format!("Failed to build request: {}", e))?;
 
         let response = match request.send() {
@@ -378,6 +389,18 @@ pub fn get_audio_stream_url(
                         &final_url,
                         &player_js_code,
                     );
+
+                    // Append ?pot=PO_TOKEN like yt-dlp does
+                    let final_url = if let Some(pot) = po_token {
+                        if !pot.is_empty() {
+                            let sep = if final_url.contains('?') { '&' } else { '?' };
+                            format!("{}{}pot={}", final_url, sep, pot)
+                        } else {
+                            final_url
+                        }
+                    } else {
+                        final_url
+                    };
 
                     eprintln!(
                         "[youtube] Client {} got stream: itag={:?}, mime={:?}, bitrate={:?}",

@@ -180,6 +180,18 @@ pub fn play_file_internal(
         device_sample_rate, config.channels, sample_rate, channels
     );
 
+    // ── Seek application: init the position clock to the seek target ──
+    // ExoPlayer-style: the position clock is `samples_played / rate / ch`.
+    // When a seek is applied, we seed the clock at the seek target so the
+    // position getter naturally returns the new value and advances from there
+    // — no 0-snap, no client-side latch needed.
+    if seek_pos_ms > 0 {
+        let ch_out = config.channels as u64;
+        let rate_out = device_sample_rate as u64;
+        let initial_samples = (seek_pos_ms * rate_out * ch_out) / 1000;
+        samples_played.store(initial_samples, Ordering::Relaxed);
+    }
+
     let mut registry = CodecRegistry::new();
     registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();
     registry.register_audio_decoder::<symphonia_codec_aac::AacDecoder>();

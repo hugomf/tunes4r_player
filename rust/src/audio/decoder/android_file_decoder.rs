@@ -391,6 +391,17 @@ pub fn play_file_internal(
         channels_out.store(config.channels as u64, Ordering::Relaxed);
         info!("[file] Device output: {} Hz, {} ch", device_sample_rate, config.channels);
 
+        // ── Seek application: init the position clock to the seek target ──
+        // ExoPlayer-style: when a seek is applied, seed the sample counter
+        // at the seek target so the computed position advances from there
+        // — no 0-snap, no client-side latch needed.
+        if seek_pos_ms > 0 {
+            let ch_out = config.channels as u64;
+            let rate_out = device_sample_rate as u64;
+            let initial_samples = (seek_pos_ms * rate_out * ch_out) / 1000;
+            samples_played.store(initial_samples, Ordering::Relaxed);
+        }
+
         let stream = match build_output_stream(
             &device,
             &config,

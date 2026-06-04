@@ -28,7 +28,7 @@ pub use audio::{PlaybackEngine, PlaybackError};
 pub use dsp::{
     Equalizer, RmsSpectrumAnalyzer, SpectrumAnalyzer, SpectrumConfig, DEFAULT_SPECTRUM_BANDS,
 };
-pub use models::{EqualizerBand, PlaybackPosition, PlaybackState, Song, SpectrumData};
+pub use models::{AdaptiveRingBuffer, DownloadBuffer, EqualizerBand, PlaybackPosition, PlaybackState, Song, SpectrumData};
 pub use youtube::{SearchResult, VideoMetadata, YouTubeService};
 
 pub use youtube::{get_audio_stream_url, get_video_info, search_videos};
@@ -80,9 +80,10 @@ pub fn create_playback_engine() -> PlaybackEngine {
 /// Unified play: auto-detect source type from URI and start playback.
 ///
 /// Accepts file paths, HTTP URLs, YouTube URLs/IDs/search queries.
-pub fn play(engine: &mut PlaybackEngine, uri: String) -> Result<(), String> {
+/// `buffer_size_ms` — optional fixed ring buffer capacity in ms (None = adaptive).
+pub fn play(engine: &mut PlaybackEngine, uri: String, buffer_size_ms: Option<u64>) -> Result<(), String> {
     engine
-        .play(&uri)
+        .play(&uri, buffer_size_ms)
         .map_err(|e| format!("Play error: {}", e))
 }
 

@@ -2,8 +2,9 @@
 
 use crate::audio::stream::cpal_source::AudioBuffer;
 use crate::audio::stream::source::{SourceInfo, StreamSource};
-use crate::models::{PlaybackPosition, PlaybackState};
+use crate::models::{DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState};
 use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -28,6 +29,11 @@ pub enum PlaybackType {
         url: String,
         video_id: Option<String>,
         cache_dir: String,
+    },
+    /// Live internet stream with backward seek support via ring buffer.
+    Live {
+        url: String,
+        cache_max_ms: u64,
     },
 }
 
@@ -62,6 +68,26 @@ pub struct PlaybackEngine {
     pub(crate) playback_type: Option<PlaybackType>,
     pub(crate) source: Option<Box<dyn StreamSource>>,
     pub(crate) seek_target_ms: Arc<AtomicU64>,
+    /// Download buffer state for progressive streams. Updated by the
+    /// streaming code (SeekableStreamReader, pipe writer, etc.) as bytes
+    /// arrive. The UI uses this to render the buffered range of the slider
+    /// and to constrain seek targets to within the downloaded region.
+    pub(crate) download_buffer: Arc<Mutex<DownloadBuffer>>,
+    /// Handle for the periodic buffer-poller thread that maps
+    /// `pipe_bytes_sent` / `pipe_total_bytes` into the `DownloadBuffer`
+    /// for the UI. Joined in `stop()`.
+    pub(crate) buffer_poller_handle: Option<thread::JoinHandle<()>>,
+    /// Thread-safe event queue for engine → client notifications
+    /// (state changes, seek lifecycle, end-of-stream, errors).
+    pub(crate) event_queue: Arc<Mutex<VecDeque<EngineEvent>>>,
+
+    /// Shared ring buffer for live stream caching across seeks.
+    /// Created in `play_live()` and passed to each `play_live_internal` call.
+    pub(crate) live_ring: Option<std::sync::Arc<std::sync::Mutex<crate::models::LiveByteRing>>>,
+
+    /// Fixed ring buffer capacity in ms. 0 = adaptive (sized by throughput).
+    /// Set before `play_pipeline()` and read by the buffer poller thread.
+    pub(crate) buffer_size_ms_fixed: Arc<AtomicU64>,
 }
 
 impl PlaybackEngine {

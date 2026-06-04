@@ -10,6 +10,7 @@ pub mod formats;
 pub mod js;
 pub mod js_engine;
 pub mod manifest;
+pub mod pot;
 pub mod search;
 pub mod stream;
 pub mod video;
@@ -57,6 +58,8 @@ pub struct YouTubeService {
     visitor_data: Option<String>,
     known_blocked: std::collections::HashSet<String>,
     cookies: Option<String>,
+    /// PoToken for proof-of-origin verification (like yt-dlp's `--extractor-args "youtube:po_token=..."`)
+    po_token: Option<String>,
 }
 
 impl Default for YouTubeService {
@@ -112,6 +115,14 @@ impl YouTubeService {
     pub fn cookies(&self) -> Option<&String> {
         self.cookies.as_ref()
     }
+
+    pub fn set_po_token(&mut self, po_token: String) {
+        self.po_token = Some(po_token);
+    }
+
+    pub fn po_token(&self) -> Option<&String> {
+        self.po_token.as_ref()
+    }
 }
 
 #[derive(Default)]
@@ -120,6 +131,7 @@ pub struct YouTubeServiceBuilder {
     cookies: Option<String>,
     timeout: Option<std::time::Duration>,
     proxy: Option<String>,
+    po_token: Option<String>,
 }
 
 impl YouTubeServiceBuilder {
@@ -144,6 +156,11 @@ impl YouTubeServiceBuilder {
 
     pub fn proxy(mut self, proxy: String) -> Self {
         self.proxy = Some(proxy);
+        self
+    }
+
+    pub fn po_token(mut self, po_token: String) -> Self {
+        self.po_token = Some(po_token);
         self
     }
 
@@ -186,6 +203,7 @@ impl YouTubeServiceBuilder {
             visitor_data: None,
             known_blocked: std::collections::HashSet::new(),
             cookies: self.cookies,
+            po_token: self.po_token,
         }
     }
 }
@@ -198,6 +216,7 @@ impl Clone for YouTubeService {
             visitor_data: self.visitor_data.clone(),
             known_blocked: std::collections::HashSet::new(),
             cookies: self.cookies.clone(),
+            po_token: self.po_token.clone(),
         }
     }
 }
@@ -205,13 +224,24 @@ impl Clone for YouTubeService {
 /// High-level YouTube API (replaces youtube_explode::YouTube).
 pub struct YouTube {
     client: Arc<Client>,
+    po_token: Option<String>,
 }
 
 impl YouTube {
     pub fn new() -> Self {
         Self {
             client: Arc::new(Client::new()),
+            po_token: None,
         }
+    }
+
+    pub fn with_po_token(mut self, po_token: String) -> Self {
+        self.po_token = Some(po_token);
+        self
+    }
+
+    pub fn set_po_token(&mut self, po_token: Option<String>) {
+        self.po_token = po_token;
     }
 
     pub fn client(&self) -> &Client {
@@ -221,6 +251,7 @@ impl YouTube {
     pub fn videos(&self) -> Videos {
         Videos {
             client: self.client.clone(),
+            po_token: self.po_token.clone(),
         }
     }
 }
@@ -233,10 +264,18 @@ impl Default for YouTube {
 
 pub struct Videos {
     client: Arc<Client>,
+    po_token: Option<String>,
 }
 
 impl Videos {
     pub fn get(&self, video_id: &str) -> Result<VideoInfo, String> {
+        // Try to get video info from player API first (includes duration)
+        match self.get_from_player_api(video_id) {
+            Ok(info) => return Ok(info),
+            Err(_) => {}
+        }
+
+        // Fallback: oembed (no duration)
         let url = format!(
             "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={}&format=json",
             video_id
@@ -267,8 +306,132 @@ impl Videos {
         })
     }
 
+    /// Try to get video info from the InnerTube player API (includes duration)
+    fn get_from_player_api(&self, video_id: &str) -> Result<VideoInfo, String> {
+        // Fetch watch page for visitor data
+        let watch_data = crate::youtube::watch::fetch_watch_page(self.client.http(), video_id)
+            .map_err(|_| "Failed to fetch watch page")?;
+
+        // Auto-generate cold-start PoToken if none configured
+        let po_token = self.po_token.clone().or_else(|| {
+            watch_data.visitor_data.clone().map(|vd| {
+                crate::youtube::pot::generate_cold_start_token(&vd)
+            })
+        });
+
+        // Build a simple WEB client request
+        let web_client = crate::youtube::client::YtClient {
+            name: "WEB".to_string(),
+            version: "2.20260114.08.00".to_string(),
+            api_url: crate::youtube::client::yt_api_url(""),
+            user_agent: None,
+            extra: serde_json::json!({
+                "clientName": "WEB",
+                "clientVersion": "2.20250312.04.00",
+                "hl": "en",
+                "gl": "US",
+                "timeZone": "UTC",
+                "utcOffsetMinutes": 0,
+            }),
+            extra_body: serde_json::Value::Object(serde_json::Map::new()),
+            context_extra: serde_json::Value::Object(serde_json::Map::new()),
+            requires_pot: false,
+            needs_signature: true,
+        };
+
+        let mut body = serde_json::json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20250312.04.00",
+                    "hl": "en",
+                    "gl": "US",
+                }
+            },
+            "videoId": video_id,
+            "contentCheckOk": true,
+            "racyCheckOk": true,
+        });
+
+        // Include PoToken in request body
+        if let Some(ref pot) = po_token {
+            body["serviceIntegrityDimensions"] = serde_json::json!({
+                "poToken": pot
+            });
+        }
+
+        let response = self
+            .client
+            .http()
+            .post(&web_client.api_url)
+            .header("Content-Type", "application/json")
+            .header("Origin", "https://www.youtube.com")
+            .header("X-Goog-Visitor-Id", watch_data.visitor_data.as_deref().unwrap_or(""))
+            .json(&body)
+            .send()
+            .map_err(|e| e.to_string())?;
+
+        let data: serde_json::Value = response.json().map_err(|e| e.to_string())?;
+
+        let duration = data
+            .pointer("/videoDetails/lengthSeconds")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        // Extract video details from the player response or fall back to oembed
+        let video_id_str = video_id.to_string();
+        let title = data
+            .pointer("/videoDetails/title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let author = data
+            .pointer("/videoDetails/author")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // If player response doesn't have title/author, fetch from oembed
+        if title.is_empty() || author.is_empty() {
+            let oembed_url = format!(
+                "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={}&format=json",
+                video_id
+            );
+            if let Ok(resp) = self.client.http().get(&oembed_url).send() {
+                if let Ok(oembed_data) = resp.json::<serde_json::Value>() {
+                    let oembed_title = oembed_data
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let oembed_author = oembed_data
+                        .get("author_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    return Ok(VideoInfo {
+                        id: video_id_str,
+                        title: if title.is_empty() { oembed_title.to_string() } else { title },
+                        author: if author.is_empty() { oembed_author.to_string() } else { author },
+                        duration,
+                    });
+                }
+            }
+        }
+
+        Ok(VideoInfo {
+            id: video_id_str,
+            title,
+            author,
+            duration,
+        })
+    }
+
     pub fn stream(&self, video_id: &str) -> Result<StreamManifest, String> {
-        StreamExtractor::new(self.client.clone()).extract(video_id)
+        let mut extractor = StreamExtractor::new(self.client.clone());
+        if let Some(ref pot) = self.po_token {
+            extractor.set_po_token(Some(pot.clone()));
+        }
+        extractor.extract(video_id)
     }
 
     pub fn stream_with_client(
@@ -277,6 +440,13 @@ impl Videos {
     ) -> Result<(StreamManifest, reqwest::blocking::Client), String> {
         let extractor = StreamExtractor::new(self.client.clone());
         let watch_data = extractor.fetch_watch_page(video_id)?;
+
+        // Auto-generate cold-start PoToken if none configured
+        let po_token = self.po_token.clone().or_else(|| {
+            watch_data.visitor_data.clone().map(|vd| {
+                crate::youtube::pot::generate_cold_start_token(&vd)
+            })
+        });
 
         let mut player_js_code: Option<String> = None;
         let mut signature_transforms: Option<Vec<String>> = None;
@@ -304,6 +474,7 @@ impl Videos {
                 &watch_data,
                 &player_js_code,
                 &signature_transforms,
+                po_token.as_deref(),
             ) {
                 Ok(manifest) => {
                     let http_client = extractor.create_client_with_cookies(&watch_data);

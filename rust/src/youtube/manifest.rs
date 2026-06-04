@@ -4,6 +4,8 @@ use crate::youtube::formats::StreamFormat;
 pub struct StreamManifest {
     pub audio: Vec<StreamFormat>,
     pub video: Vec<StreamFormat>,
+    /// Duration in seconds (from videoDetails.lengthSeconds), 0 if unknown
+    pub duration_seconds: u64,
 }
 
 impl StreamManifest {
@@ -21,5 +23,9 @@ impl StreamManifest {
 
     pub fn best_video(&self) -> Option<&StreamFormat> {
         self.video.iter().max_by_key(|f| f.quality)
+    }
+
+    pub fn duration_ms(&self) -> u64 {
+        self.duration_seconds * 1000
     }
 }

@@ -3,7 +3,14 @@ use crate::youtube::client::get_yt_clients;
 use crate::youtube::formats::{AudioQuality, StreamFormat, VideoQuality};
 use crate::youtube::manifest::StreamManifest;
 use serde::Deserialize;
+use serde::Deserializer;
 use std::sync::Arc;
+
+#[derive(Debug, Clone, Deserialize)]
+struct VideoDetails {
+    #[serde(rename = "lengthSeconds")]
+    length_seconds: Option<String>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 struct PlayerResponse {
@@ -11,6 +18,8 @@ struct PlayerResponse {
     playability_status: Option<PlayabilityStatus>,
     #[serde(rename = "streamingData")]
     streaming_data: Option<StreamingData>,
+    #[serde(rename = "videoDetails")]
+    video_details: Option<VideoDetails>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -36,6 +45,21 @@ struct Format {
     #[serde(rename = "signatureCipher")]
     signature_cipher: Option<String>,
     cipher: Option<String>,
+    #[serde(rename = "approxDurationMs", deserialize_with = "deserialize_f64_from_string")]
+    approx_duration_ms: Option<f64>,
+}
+
+pub(crate) fn deserialize_f64_from_string<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+    match serde_json::Value::deserialize(deserializer) {
+        Ok(serde_json::Value::Number(n)) => n.as_f64().map(Some).ok_or_else(|| de::Error::custom("expected number")),
+        Ok(serde_json::Value::String(s)) => s.parse::<f64>().map(Some).map_err(de::Error::custom),
+        Ok(serde_json::Value::Null) => Ok(None),
+        _ => Ok(None),
+    }
 }
 
 impl Format {
@@ -43,9 +67,10 @@ impl Format {
         &self,
         player_js_code: &Option<String>,
         signature_transforms: &Option<Vec<String>>,
+        po_token: Option<&str>,
     ) -> StreamFormat {
         let mime = self.mime_type.as_deref().unwrap_or("");
-        let url = self
+        let mut url = self
             .url
             .clone()
             .or_else(|| {
@@ -62,6 +87,14 @@ impl Format {
             })
             .unwrap_or_default();
 
+        // Append ?pot=PO_TOKEN like yt-dlp does
+        if let Some(pot) = po_token {
+            if !url.is_empty() && !pot.is_empty() {
+                let separator = if url.contains('?') { '&' } else { '?' };
+                url = format!("{}{}pot={}", url, separator, pot);
+            }
+        }
+
         StreamFormat {
             itag: self.itag,
             mime_type: mime.to_string(),
@@ -69,6 +102,7 @@ impl Format {
             quality: VideoQuality::from_itag(self.itag).unwrap_or(VideoQuality::Quality360),
             audio_quality: AudioQuality::from_bitrate(self.bitrate.unwrap_or(0)),
             url,
+            approx_duration_ms: self.approx_duration_ms.map(|d| d as u64),
         }
     }
 }
@@ -107,15 +141,39 @@ fn decipher_signature_cipher(
 
 pub struct StreamExtractor {
     client: Arc<Client>,
+    po_token: Option<String>,
 }
 
 impl StreamExtractor {
     pub fn new(client: Arc<Client>) -> Self {
-        Self { client }
+        Self { client, po_token: None }
+    }
+
+    pub fn with_po_token(mut self, po_token: String) -> Self {
+        self.po_token = Some(po_token);
+        self
+    }
+
+    pub fn set_po_token(&mut self, po_token: Option<String>) {
+        self.po_token = po_token;
     }
 
     pub fn extract(&self, video_id: &str) -> Result<StreamManifest, String> {
+        self.extract_with_po_token(video_id, self.po_token.as_deref())
+    }
+
+    pub fn extract_with_po_token(&self, video_id: &str, po_token: Option<&str>) -> Result<StreamManifest, String> {
         let watch_data = self.fetch_watch_page(video_id)?;
+
+        // If no explicit PoToken is configured, auto-generate a cold-start
+        // placeholder from the visitor_data.  This avoids falling back to
+        // unauthenticated requests that YouTube may reject or throttle.
+        let auto_token = po_token.is_none().then(|| {
+            watch_data.visitor_data.as_ref().map(|vd| {
+                crate::youtube::pot::generate_cold_start_token(vd)
+            })
+        }).flatten();
+        let po_token = po_token.or(auto_token.as_deref());
 
         let mut player_js_code: Option<String> = None;
         let mut signature_transforms: Option<Vec<String>> = None;
@@ -137,12 +195,13 @@ impl StreamExtractor {
         }
 
         for yt_client in get_yt_clients().iter() {
-            match self.extract_with_client(
+            match self.extract_with_client_internal(
                 video_id,
                 yt_client,
                 &watch_data,
                 &player_js_code,
                 &signature_transforms,
+                po_token,
             ) {
                 Ok(manifest) => {
                     if !manifest.audio.is_empty() || !manifest.video.is_empty() {
@@ -181,6 +240,26 @@ impl StreamExtractor {
             watch_data,
             player_js_code,
             signature_transforms,
+            None,
+        )
+    }
+
+    pub fn extract_with_client_po_token(
+        &self,
+        video_id: &str,
+        client: &crate::youtube::client::YtClient,
+        watch_data: &WatchData,
+        player_js_code: &Option<String>,
+        signature_transforms: &Option<Vec<String>>,
+        po_token: Option<&str>,
+    ) -> Result<StreamManifest, String> {
+        self.extract_with_client_internal(
+            video_id,
+            client,
+            watch_data,
+            player_js_code,
+            signature_transforms,
+            po_token,
         )
     }
 
@@ -191,8 +270,9 @@ impl StreamExtractor {
         watch_data: &WatchData,
         player_js_code: &Option<String>,
         signature_transforms: &Option<Vec<String>>,
+        po_token: Option<&str>,
     ) -> Result<StreamManifest, String> {
-        let client_map = serde_json::json!({
+        let mut client_map = serde_json::json!({
             "clientName": client.name,
             "clientVersion": client.version,
             "hl": "en",
@@ -201,7 +281,24 @@ impl StreamExtractor {
             "utcOffsetMinutes": 0,
         });
 
-        let body = serde_json::json!({
+        // Merge client extra fields (osName, osVersion, device info, etc.)
+        if let Some(obj) = client_map.as_object_mut() {
+            if let Some(extra) = client.extra.as_object() {
+                for (k, v) in extra {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+
+        // yt-dlp includes userAgent in the API request body client context
+        // for all clients that define one. YouTube may check this.
+        if let Some(ua) = &client.user_agent {
+            if let Some(obj) = client_map.as_object_mut() {
+                obj.insert("userAgent".to_string(), serde_json::Value::String(ua.clone()));
+            }
+        }
+
+        let mut body = serde_json::json!({
             "context": {
                 "client": client_map,
             },
@@ -209,6 +306,16 @@ impl StreamExtractor {
             "contentCheckOk": true,
             "racyCheckOk": true,
         });
+
+        // Include PoToken in request body like yt-dlp:
+        // yt_query['serviceIntegrityDimensions'] = {'poToken': po_token}
+        if let Some(pot) = po_token {
+            if !pot.is_empty() {
+                body["serviceIntegrityDimensions"] = serde_json::json!({
+                    "poToken": pot
+                });
+            }
+        }
 
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
@@ -271,6 +378,14 @@ impl StreamExtractor {
             }
         };
 
+        // Extract duration from videoDetails
+        let duration_seconds = data
+            .video_details
+            .as_ref()
+            .and_then(|vd| vd.length_seconds.as_ref())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
         let mut audio = Vec::new();
         let mut video = Vec::new();
 
@@ -279,7 +394,7 @@ impl StreamExtractor {
             .iter()
             .chain(streaming.adaptive_formats.iter())
         {
-            let sf = fmt.to_stream_format(player_js_code, signature_transforms);
+            let sf = fmt.to_stream_format(player_js_code, signature_transforms, po_token);
             if sf.is_audio() {
                 audio.push(sf);
             } else if sf.is_video() {
@@ -287,7 +402,7 @@ impl StreamExtractor {
             }
         }
 
-        Ok(StreamManifest { audio, video })
+        Ok(StreamManifest { audio, video, duration_seconds })
     }
 
     pub fn create_client_with_cookies(&self, watch_data: &WatchData) -> reqwest::blocking::Client {

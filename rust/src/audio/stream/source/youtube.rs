@@ -22,6 +22,7 @@ pub struct YouTubeSource {
     info: SourceInfo,
     client: Arc<HttpClient>,
     audio_url: String,
+    duration_ms: u64,
     total_content_bytes: std::sync::atomic::AtomicU64,
 }
 
@@ -31,9 +32,18 @@ impl YouTubeSource {
         client: Arc<HttpClient>,
         _cache_dir: Option<String>,
     ) -> Result<Self, PlaybackError> {
+        Self::with_po_token(input, client, _cache_dir, None)
+    }
+
+    pub fn with_po_token(
+        input: &str,
+        client: Arc<HttpClient>,
+        _cache_dir: Option<String>,
+        po_token: Option<String>,
+    ) -> Result<Self, PlaybackError> {
         info!("[youtube-source] Resolving: {}", input);
 
-        let (audio_url, video_id) = match resolve_youtube_audio(input) {
+        let (audio_url, video_id, duration_ms) = match resolve_youtube_audio(input, po_token) {
             Ok(result) => result,
             Err(e) => {
                 return Err(PlaybackError::HttpStream {
@@ -44,8 +54,9 @@ impl YouTubeSource {
         };
 
         info!(
-            "[youtube-source] Resolved video_id={}, audio_url length={}",
+            "[youtube-source] Resolved video_id={}, duration={}ms, audio_url length={}",
             video_id,
+            duration_ms,
             audio_url.len()
         );
 
@@ -60,17 +71,17 @@ impl YouTubeSource {
             },
             client,
             audio_url,
+            duration_ms,
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
     #[cfg_attr(target_os = "android", allow(dead_code))]
     fn estimate_byte_offset(&self, seek_ms: u64, content_length: u64) -> u64 {
-        if content_length == 0 {
+        if content_length == 0 || self.duration_ms == 0 {
             return 0;
         }
-        let estimated_total_ms = 300_000u64;
-        let ratio = (seek_ms as f64 / estimated_total_ms as f64).min(0.99);
+        let ratio = (seek_ms as f64 / self.duration_ms as f64).min(0.99);
         (ratio * content_length as f64) as u64
     }
 }
@@ -214,13 +225,16 @@ impl StreamSource for YouTubeSource {
     }
 }
 
-fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
+fn resolve_youtube_audio(input: &str, po_token: Option<String>) -> Result<(String, String, u64), String> {
     let video_id = extract_video_id(input);
 
     match video_id {
         Some(id) => {
             debug!("[youtube-source] Extracted video_id: {}", id);
-            let yt = YouTube::new();
+            let mut yt = YouTube::new();
+            if let Some(ref pot) = po_token {
+                yt.set_po_token(Some(pot.clone()));
+            }
             let manifest = yt.videos().stream(&id).map_err(|e| {
                 format!("Failed to get YouTube stream: {}", e)
             })?;
@@ -233,7 +247,16 @@ fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
                 return Err("Extracted YouTube audio URL is empty".to_string());
             }
 
-            Ok((audio.url.clone(), id))
+            // Prefer per-format approx_duration_ms, fall back to manifest duration_seconds
+            let duration_ms = audio
+                .approx_duration_ms
+                .or_else(|| {
+                    let secs = manifest.duration_seconds;
+                    if secs > 0 { Some(secs * 1000) } else { None }
+                })
+                .unwrap_or(0);
+
+            Ok((audio.url.clone(), id, duration_ms))
         }
         None => {
             info!("[youtube-source] Treating input as search query: {}", input);
@@ -251,6 +274,10 @@ fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
                 first.title, first.id
             );
 
+            let mut yt = YouTube::new();
+            if let Some(ref pot) = po_token {
+                yt.set_po_token(Some(pot.clone()));
+            }
             let manifest = yt.videos().stream(&first.id).map_err(|e| {
                 format!("Failed to get YouTube stream for '{}': {}", first.id, e)
             })?;
@@ -263,7 +290,15 @@ fn resolve_youtube_audio(input: &str) -> Result<(String, String), String> {
                 return Err("Extracted YouTube audio URL is empty".to_string());
             }
 
-            Ok((audio.url.clone(), first.id.clone()))
+            let duration_ms = audio
+                .approx_duration_ms
+                .or_else(|| {
+                    let secs = manifest.duration_seconds;
+                    if secs > 0 { Some(secs * 1000) } else { None }
+                })
+                .unwrap_or(0);
+
+            Ok((audio.url.clone(), first.id.clone(), duration_ms))
         }
     }
 }
@@ -368,6 +403,7 @@ mod tests {
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
+            duration_ms: 300_000,
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         };
         assert_eq!(src.estimate_byte_offset(1000, 0), 0);
@@ -384,6 +420,7 @@ mod tests {
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
+            duration_ms: 300_000,
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         };
         let offset = src.estimate_byte_offset(150_000, 10_000_000);
@@ -401,10 +438,31 @@ mod tests {
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
+            duration_ms: 300_000,
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         };
-        let offset = src.estimate_byte_offset(350_000, 1000);
+        let offset = src.estimate_byte_offset(297_000, 1000);
         assert_eq!(offset, 990);
+    }
+
+    #[test]
+    fn test_estimate_byte_offset_uses_real_duration() {
+        // A 213-second video seeking to 50% should give byte offset at ~50%
+        let src = YouTubeSource {
+            info: SourceInfo {
+                kind: SourceKind::YouTube,
+                stream_type: StreamType::Seekable { total_bytes: 0 },
+                uri: "test".into(),
+                title: None,
+            },
+            client: Arc::new(crate::audio::engine::types::HttpClient::default()),
+            audio_url: "http://example.com".into(),
+            duration_ms: 213_159,
+            total_content_bytes: std::sync::atomic::AtomicU64::new(0),
+        };
+        let offset = src.estimate_byte_offset(106_579, 10_000_000);
+        assert!(offset > 4_900_000 && offset < 5_100_000,
+            "expected ~50% byte offset for 50% seek, got {offset}");
     }
 
     #[test]
@@ -418,6 +476,7 @@ mod tests {
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
+            duration_ms: 300_000,
             total_content_bytes: std::sync::atomic::AtomicU64::new(0),
         };
         assert!(src.supports(Capability::Seek));

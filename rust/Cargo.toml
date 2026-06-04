@@ -27,6 +27,10 @@ path = "examples/yt_explode.rs"
 name = "play_youtube_with_seek"
 path = "examples/play_youtube_with_seek.rs"
 
+[[example]]
+name = "tui_player"
+path = "examples/tui_player.rs"
+
 [features]
 default = ["rustls-platform-verifier"]
 rustls-platform-verifier = ["dep:rustls-platform-verifier", "dep:rustls"]
@@ -86,3 +90,7 @@ stream-download = { version = "0.24", features = ["registry", "reqwest-rustls"] 
 
 [dependencies.id3]
 version = "1.17.0"
+
+[dev-dependencies]
+ratatui = "0.29"
+crossterm = "0.28"

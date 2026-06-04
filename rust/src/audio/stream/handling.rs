@@ -30,6 +30,32 @@ use symphonia::core::meta::MetadataOptions;
 #[cfg(not(target_os = "android"))]
 use symphonia::core::units::{TimeBase, Timestamp};
 
+/// A `Read` wrapper that counts bytes read and updates an `AtomicU64`.
+/// Used for Read-based sources (YouTube, progressive HTTP) to feed the
+/// buffer poller's `pipe_bytes_sent` counter, so the adaptive ring buffer
+/// reflects actual download progress instead of appearing 100% complete.
+#[cfg(not(target_os = "android"))]
+pub struct ByteCountingRead<R: Read> {
+    inner: R,
+    counter: Arc<AtomicU64>,
+}
+
+#[cfg(not(target_os = "android"))]
+impl<R: Read> ByteCountingRead<R> {
+    pub fn new(inner: R, counter: Arc<AtomicU64>) -> Self {
+        Self { inner, counter }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+impl<R: Read> Read for ByteCountingRead<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.counter.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 pub fn fast_forward_stream_seek(
     format: &mut Box<dyn symphonia::core::formats::FormatReader>,
@@ -425,7 +451,6 @@ pub fn decode_and_play_from_read(
 
     let spectrum_sample_buffer: Arc<Mutex<Vec<f32>>> =
         Arc::new(Mutex::new(Vec::with_capacity(4096)));
-    let callback_spectrum_buf = spectrum_sample_buffer.clone();
 
     info!("[stream] Building output stream...");
 
@@ -665,6 +690,8 @@ pub fn play_stream_internal(
     load_error: Arc<Mutex<String>>,
     seek_target_ms: Arc<AtomicU64>,
     seek_byte_offset: u64,
+    pipe_bytes_sent: Arc<AtomicU64>,
+    pipe_total_bytes: Arc<AtomicU64>,
 ) {
     debug!("[stream] Starting stream playback: {}", url);
 
@@ -734,6 +761,11 @@ pub fn play_stream_internal(
                             "[stream] Content-Length: {:?}",
                             headers.get(reqwest::header::CONTENT_LENGTH)
                         );
+                        // Feed the adaptive ring buffer with real download
+                        // progress for this Read-based source.
+                        if let Some(cl) = resp.content_length() {
+                            pipe_total_bytes.store(cl, Ordering::Relaxed);
+                        }
                         resp
                     }
                     Err(e) => {
@@ -755,6 +787,12 @@ pub fn play_stream_internal(
                     *load_error.lock() = err_msg;
                     return;
                 }
+
+                // Wrap the response so each read() bumps pipe_bytes_sent.
+                // This is what the buffer poller uses to compute the
+                // ring buffer's write_offset_ms — without it YouTube
+                // would always show 100% buffered.
+                let response = ByteCountingRead::new(response, pipe_bytes_sent.clone());
 
                 decode_and_play_from_read(
                     Box::new(response),
@@ -800,6 +838,9 @@ pub fn play_stream_internal(
                     "[stream] Content-Length: {:?}",
                     headers.get(reqwest::header::CONTENT_LENGTH)
                 );
+                if let Some(cl) = resp.content_length() {
+                    pipe_total_bytes.store(cl, Ordering::Relaxed);
+                }
                 resp
             }
             Err(e) => {
@@ -821,6 +862,8 @@ pub fn play_stream_internal(
             *load_error.lock() = err_msg;
             return;
         }
+
+        let response = ByteCountingRead::new(response, pipe_bytes_sent.clone());
 
         decode_and_play_from_read(
             Box::new(response),
@@ -1064,4 +1107,94 @@ pub fn play_stream_internal(/* ... */) {
 #[cfg(target_os = "android")]
 pub fn play_stream_from_pipe_internal(/* ... */) {
     panic!("play_stream_from_pipe_internal is Android-specific and should be in android_file_decoder.rs");
+}
+
+/// Play a live internet stream with backward-seek support via ring buffer.
+///
+/// On the first call (no cached data), downloads fresh from the URL and caches
+/// bytes into the shared ring buffer. On subsequent calls (seek), reads from
+/// the ring buffer at the calculated byte position for the seek target.
+pub fn play_live_internal(
+    url: String,
+    client: Arc<reqwest::blocking::Client>,
+    audio_queue: crate::audio::stream::cpal_source::AudioBuffer,
+    buffer_ready: Arc<AtomicBool>,
+    is_playing_flag: Arc<AtomicBool>,
+    should_stop: Arc<AtomicBool>,
+    samples_played: Arc<AtomicU64>,
+    sample_rate_out: Arc<AtomicU64>,
+    channels_out: Arc<AtomicU64>,
+    total_duration_ms: Arc<AtomicU64>,
+    load_error: Arc<Mutex<String>>,
+    seek_target_ms: Arc<AtomicU64>,
+    _pipe_bytes_sent: Arc<AtomicU64>,
+    _pipe_total_bytes: Arc<AtomicU64>,
+    cache_max_ms: u64,
+    ring: std::sync::Arc<std::sync::Mutex<crate::models::LiveByteRing>>,
+) {
+    info!("[live] play_live_internal: {}", url);
+
+    let seek_pos = seek_target_ms.load(Ordering::Relaxed);
+
+    // Determine if we should read from cached ring (seek) or download fresh.
+    let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
+        // Seek: calculate byte offset within the ring buffer.
+        let r = ring.lock().unwrap();
+        let total = r.total_written();
+        let bytes_per_ms = if cache_max_ms > 0 {
+            (total as f64) / (cache_max_ms as f64)
+        } else {
+            128.0
+        };
+        let byte_offset = (seek_pos as f64 * bytes_per_ms) as u64;
+        let clamped = if total > byte_offset { total - byte_offset } else { 0 };
+        info!("[live] Seek to {}ms, byte offset ~{}, ring total_written={}", seek_pos, clamped, total);
+        drop(r);
+        Box::new(crate::models::LiveByteReader::new(ring, clamped))
+    } else {
+        // Initial play: download fresh and cache into ring buffer.
+        info!("[live] Downloading fresh stream");
+        let resp = match client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+            .header("Icy-MetaData", "0")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let err = format!("HTTP {}", r.status());
+                *load_error.lock() = err.clone();
+                error!("[live] {}", err);
+                return;
+            }
+            Err(e) => {
+                let err = format!("Connection failed: {}", e);
+                *load_error.lock() = err.clone();
+                error!("[live] {}", err);
+                return;
+            }
+        };
+        Box::new(crate::models::LiveByteCacheReader::new(resp, ring))
+    };
+
+    total_duration_ms.store(cache_max_ms, Ordering::Relaxed);
+    decode_and_play_from_read(
+        reader,
+        audio_queue,
+        buffer_ready,
+        is_playing_flag,
+        should_stop,
+        samples_played,
+        sample_rate_out,
+        channels_out,
+        total_duration_ms,
+        load_error,
+        seek_target_ms,
+    );
+}
+
+#[cfg(target_os = "android")]
+pub fn play_live_internal(/* ... */) {
+    panic!("play_live_internal is Android-specific and should be in android_file_decoder.rs");
 }

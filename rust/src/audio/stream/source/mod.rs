@@ -4,6 +4,7 @@
 //! Features (caching, adaptive buffering) are layered as decorators.
 
 pub mod file;
+pub mod live;
 pub mod pipe;
 pub mod pipeline;
 pub mod radio;
@@ -32,6 +33,7 @@ pub enum SourceKind {
     YouTube,
     File,
     Pipe,
+    Live,
 }
 
 /// Read-only metadata about the source.

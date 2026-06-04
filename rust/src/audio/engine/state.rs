@@ -1,7 +1,11 @@
 //! Internal state management and helper methods for the PlaybackEngine.
 
 use super::types::{PlaybackEngine, PlaybackType};
-use crate::models::{PlaybackPosition, PlaybackState};
+use crate::models::{
+    DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState, ENGINE_EVENT_NONE,
+    ENGINE_EVENT_POSITION_RESET, ENGINE_EVENT_SEEK_COMPLETED, ENGINE_EVENT_SEEK_STARTED,
+    ENGINE_EVENT_STATE_CHANGED,
+};
 use log::{debug, warn};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -50,6 +54,19 @@ impl PlaybackEngine {
 
     pub fn get_state(&self) -> PlaybackState {
         self.state.clone()
+    }
+
+    /// Set the playback state and emit a `STATE_CHANGED` event.
+    /// Use this anywhere `self.state = ...` is set from a public-facing
+    /// command so the Dart side is notified without polling.
+    pub fn set_state(&mut self, new_state: PlaybackState) {
+        if self.state != new_state {
+            self.state = new_state.clone();
+            self.push_event(EngineEvent {
+                event_type: ENGINE_EVENT_STATE_CHANGED,
+                int_param: new_state.to_i32() as i64,
+            });
+        }
     }
 
     pub fn get_position(&self) -> PlaybackPosition {
@@ -184,5 +201,74 @@ impl PlaybackEngine {
 
     pub fn clear_seek_target(&mut self) {
         self.seek_target_ms.store(0, Ordering::Relaxed);
+    }
+
+    /// Push an event to the queue. Drops the oldest event if the queue
+    /// grows past a reasonable cap so a slow consumer can't OOM the engine.
+    pub fn push_event(&self, event: EngineEvent) {
+        let mut q = self.event_queue.lock();
+        if q.len() >= 256 {
+            q.pop_front();
+        }
+        q.push_back(event);
+    }
+
+    /// Push a state-changed event with the new state encoded as i32.
+    pub fn push_state_event(&self, state: &PlaybackState) {
+        self.push_event(EngineEvent {
+            event_type: ENGINE_EVENT_STATE_CHANGED,
+            int_param: state.to_i32() as i64,
+        });
+    }
+
+    pub fn push_seek_started(&self, position_ms: u64) {
+        self.push_event(EngineEvent {
+            event_type: ENGINE_EVENT_SEEK_STARTED,
+            int_param: position_ms as i64,
+        });
+    }
+
+    pub fn push_seek_completed(&self, position_ms: u64) {
+        self.push_event(EngineEvent {
+            event_type: ENGINE_EVENT_SEEK_COMPLETED,
+            int_param: position_ms as i64,
+        });
+    }
+
+    pub fn push_position_reset(&self) {
+        self.push_event(EngineEvent {
+            event_type: ENGINE_EVENT_POSITION_RESET,
+            int_param: 0,
+        });
+    }
+
+    /// Pop the next event from the queue. Returns `EngineEvent::default()`
+    /// (event_type = NONE) when the queue is empty.
+    pub fn poll_event(&self) -> EngineEvent {
+        let mut q = self.event_queue.lock();
+        q.pop_front().unwrap_or(EngineEvent {
+            event_type: ENGINE_EVENT_NONE,
+            int_param: 0,
+        })
+    }
+
+    /// Read the current download buffer state.
+    pub fn get_download_buffer(&self) -> DownloadBuffer {
+        *self.download_buffer.lock()
+    }
+
+    /// Update the download buffer state. Called by the streaming code as
+    /// bytes arrive. No-op if the new state is identical to the current.
+    pub fn set_download_buffer(&self, new: DownloadBuffer) {
+        let mut current = self.download_buffer.lock();
+        if *current != new {
+            *current = new;
+        }
+    }
+
+    /// Reset the download buffer to "empty, unknown". Called when starting
+    /// a new playback so stale state from a previous track doesn't leak.
+    pub fn reset_download_buffer(&self) {
+        *self.download_buffer.lock() = DownloadBuffer::default();
     }
 }
