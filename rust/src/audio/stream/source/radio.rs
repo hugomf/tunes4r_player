@@ -52,7 +52,7 @@ impl StreamSource for RadioSource {
             let resp = self
                 .client
                 .get(&self.info.uri)
-                .header("User-Agent", "Mozilla/5.0")
+                        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
                 .header("Icy-MetaData", "0")
                 .header("Connection", "close")
@@ -97,7 +97,7 @@ impl StreamSource for RadioSource {
                 rt.block_on(async move {
                     let mut resp = match client
                         .get(&uri)
-                        .header("User-Agent", "Mozilla/5.0")
+                .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                         .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
                         .header("Icy-MetaData", "0")
                         .header("Connection", "close")

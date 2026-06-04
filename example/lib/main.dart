@@ -21,7 +21,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   String _error = '';
 
   final _uriCtrl = TextEditingController(
-    text: 'http://stream.live.vc.bbcmedia.co.uk/bbc_world_service',
+    text: 'https://ice1.somafm.com/groovesalad-128-mp3',
   );
 
   // Seek / position state
@@ -52,6 +52,11 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
           if (state == PlaybackState.stopped || state == PlaybackState.error) {
             _positionMs = 0;
           }
+          // Pull a fresh error message on every state change so the
+          // UI shows *why* the engine entered an error state.
+          if (state == PlaybackState.error || state == PlaybackState.stopped) {
+            _error = _engine?.loadError ?? _engine?.lastError ?? '';
+          }
         });
       });
       _startPositionPoll();
@@ -74,13 +79,17 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
         final newDuration = _engine!.durationMs;
         final newPosition = _engine!.positionMs;
         final newCanSeek = _engine!.canSeek;
+        // Also surface any load error that appeared since the last tick.
+        final newError = _engine!.loadError ?? _engine!.lastError ?? '';
         if (newDuration != _durationMs ||
             newPosition != _positionMs ||
-            newCanSeek != _canSeek) {
+            newCanSeek != _canSeek ||
+            newError != _error) {
           setState(() {
             _durationMs = newDuration;
             _positionMs = newPosition;
             _canSeek = newCanSeek;
+            _error = newError;
           });
         }
       } catch (_) {}

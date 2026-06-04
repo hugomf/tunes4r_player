@@ -784,22 +784,7 @@ pub fn play_stream_internal(
         }
     } else {
         // Not a YouTube URL, play as a regular stream
-        let yt_client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .http1_only()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.18 Safari/537.36")
-            .default_headers({
-                let mut headers = reqwest::header::HeaderMap::new();
-                headers.insert(reqwest::header::REFERER, "https://www.youtube.com".parse().unwrap());
-                headers.insert("Origin", "https://www.youtube.com".parse().unwrap());
-                headers.insert("Sec-Fetch-Mode", "navigate".parse().unwrap());
-                headers.insert("Accept", "audio/*, text/plain, application/octet-stream".parse().unwrap());
-                headers
-            })
-            .build()
-            .unwrap_or_else(|_| client.as_ref().clone());
-
-        let mut request = yt_client.get(&url);
+        let mut request = client.get(&url);
         if seek_byte_offset > 0 {
             debug!(
                 "[stream] Seek: requesting Range: bytes={}-",
