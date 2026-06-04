@@ -24,6 +24,7 @@ flutter:
     platforms:
       macos:
         ffiPlugin: true
+        swift_package_manager: true
       ios:
         ffiPlugin: true
       android:

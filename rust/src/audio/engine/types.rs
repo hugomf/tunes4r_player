@@ -1,6 +1,6 @@
 //! Common data structures, enums, and global state for the audio engine.
 
-use crate::audio::stream::queue_source::AudioBuffer;
+use crate::audio::stream::cpal_source::AudioBuffer;
 use crate::audio::stream::source::{SourceInfo, StreamSource};
 use crate::models::{PlaybackPosition, PlaybackState};
 use parking_lot::Mutex;

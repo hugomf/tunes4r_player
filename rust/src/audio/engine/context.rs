@@ -1,5 +1,5 @@
 use crate::audio::engine::types::HttpClient;
-use crate::audio::stream::queue_source::AudioBuffer;
+use crate::audio::stream::cpal_source::AudioBuffer;
 use crate::models::PlaybackPosition;
 use crate::models::PlaybackState;
 use parking_lot::Mutex;

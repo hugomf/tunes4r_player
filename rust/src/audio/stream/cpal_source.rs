@@ -24,7 +24,13 @@ use std::sync::Arc;
 
 /// Type alias for the shared ring buffer between the decode thread
 /// (producer) and the cpal callback (consumer).
-pub type AudioRing = Arc<parking_lot::Mutex<VecDeque<f32>>>;
+///
+/// This used to live in `queue_source` (as `AudioBuffer`) when rodio
+/// drove the output. After the cpal-everywhere migration, the
+/// ring-buffer pattern is the only shape used, so it lives here.
+pub type AudioBuffer = Arc<parking_lot::Mutex<VecDeque<f32>>>;
+/// Backward-compatible alias; `AudioBuffer` is the canonical name now.
+pub type AudioRing = AudioBuffer;
 
 /// Pick a cpal output config matching the decoded audio's sample rate
 /// and channel count, falling back to the device's default if no exact

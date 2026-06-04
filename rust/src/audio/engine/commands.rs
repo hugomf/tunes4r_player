@@ -2,7 +2,7 @@
 
 use super::types::{PlaybackEngine, PlaybackType};
 use crate::audio::error::PlaybackError;
-use crate::audio::stream::queue_source::AudioBuffer;
+use crate::audio::stream::cpal_source::AudioBuffer;
 use crate::models::PlaybackState;
 use log::{debug, error, info, warn};
 use parking_lot::Mutex;

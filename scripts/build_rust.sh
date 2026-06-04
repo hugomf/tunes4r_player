@@ -124,19 +124,34 @@ build_macos() {
   #    can both consume as a binaryTarget / vendored_framework.
   rm -rf "$out_dir/libtunes4r.xcframework"
 
-  # xcodebuild can take a flat dylib directly via -library; the iOS build
-  # already uses this for the .a staticlib slices, so do the same for macOS.
+  # xcodebuild -create-xcframework rejects two dylibs that share the same
+  # install_name (which they do, since cargo writes both with the path under
+  # target/<arch>/release/deps/). Make a universal (fat) dylib with lipo
+  # first, then wrap it in a single .framework and pass that to xcodebuild.
+  local tmpdir=""
+  tmpdir="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmpdir'" EXIT
+
+  local fat_dylib="$tmpdir/libtunes4r.dylib"
+  lipo -create "$arm_lib" "$x86_lib" -output "$fat_dylib"
+  install_name_tool -id "@rpath/libtunes4r.framework/libtunes4r" "$fat_dylib"
+
+  local fw="$tmpdir/libtunes4r.framework"
+  _make_framework "$fat_dylib" "$fw"
+
   if ! xcodebuild -create-xcframework \
-        -library "$arm_lib" \
-        -library "$x86_lib" \
+        -framework "$fw" \
         -output "$out_dir/libtunes4r.xcframework" >/dev/null 2>&1; then
     echo "ERROR: xcodebuild -create-xcframework failed; re-running with output"
     xcodebuild -create-xcframework \
-        -library "$arm_lib" \
-        -library "$x86_lib" \
+        -framework "$fw" \
         -output "$out_dir/libtunes4r.xcframework"
     exit 1
   fi
+
+  trap - EXIT
+  rm -rf "$tmpdir"
 
   # 2) Also drop a flat dylib for any tooling that loads it without an
   #    .framework wrapper (raw `DynamicLibrary.open('libtunes4r.dylib')`).
@@ -153,16 +168,13 @@ build_macos() {
 #
 # $1 = source dylib
 # $2 = target framework directory
-# $3 = arch tag used in CFBundleIdentifier (so xcodebuild treats the
-#      arm64 and x86_64 wrappers as distinct input libraries)
 _make_framework() {
   local dylib="$1"
   local fw="$2"
-  local arch_tag="$3"
 
   mkdir -p "$fw/Versions/A/Resources"
 
-  cat > "$fw/Versions/A/Resources/Info.plist" <<PLIST
+  cat > "$fw/Versions/A/Resources/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -172,7 +184,7 @@ _make_framework() {
     <key>CFBundleExecutable</key>
     <string>libtunes4r</string>
     <key>CFBundleIdentifier</key>
-    <string>com.tunes4r.libtunes4r.${arch_tag}</string>
+    <string>com.tunes4r.libtunes4r</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

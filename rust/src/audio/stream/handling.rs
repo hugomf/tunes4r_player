@@ -143,7 +143,7 @@ pub fn resample_interleaved(
 #[cfg(not(target_os = "android"))]
 pub fn decode_and_play_from_read(
     reader: Box<dyn Read + Send + Sync + 'static>,
-    audio_queue: crate::audio::stream::queue_source::AudioBuffer,
+    audio_queue: crate::audio::stream::cpal_source::AudioBuffer,
     buffer_ready: Arc<AtomicBool>,
     is_playing_flag: Arc<AtomicBool>,
     should_stop: Arc<AtomicBool>,
@@ -660,7 +660,7 @@ pub fn decode_and_play_from_read(
 pub fn play_stream_internal(
     url: String,
     client: Arc<reqwest::blocking::Client>,
-    audio_queue: crate::audio::stream::queue_source::AudioBuffer,
+    audio_queue: crate::audio::stream::cpal_source::AudioBuffer,
     buffer_ready: Arc<AtomicBool>,
     is_playing_flag: Arc<AtomicBool>,
     should_stop: Arc<AtomicBool>,
@@ -863,7 +863,7 @@ pub fn play_stream_internal(
 #[cfg(not(target_os = "android"))]
 pub fn play_stream_from_pipe_internal(
     reader: crate::audio::stream::pipe::PipeReader,
-    audio_queue: crate::audio::stream::queue_source::AudioBuffer,
+    audio_queue: crate::audio::stream::cpal_source::AudioBuffer,
     buffer_ready: Arc<AtomicBool>,
     is_playing_flag: Arc<AtomicBool>,
     should_stop: Arc<AtomicBool>,
@@ -891,7 +891,7 @@ pub fn play_stream_from_pipe_internal(
 #[cfg(not(target_os = "android"))]
 pub fn play_adaptive_buffer_internal(
     _pipe_writer: Arc<crate::audio::stream::pipe::PipeWriter>,
-    audio_queue: crate::audio::stream::queue_source::AudioBuffer,
+    audio_queue: crate::audio::stream::cpal_source::AudioBuffer,
     buffer_ready: Arc<AtomicBool>,
     is_playing_flag: Arc<AtomicBool>,
     should_stop: Arc<AtomicBool>,

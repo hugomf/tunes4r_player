@@ -1,8 +1,12 @@
 #
 # tunes4r macOS podspec
 #
-# The Rust dylib (libtunes4r.dylib) must be built before publishing.
+# The Rust XCFramework (libtunes4r.xcframework) must be built before publishing.
 # Run: make build-macos
+#
+# This podspec is a CocoaPods fallback for hosts that haven't opted into
+# Swift Package Manager. The SPM path is defined in macos/Package.swift
+# and activated by `swift_package_manager: true` in the plugin's pubspec.
 #
 
 Pod::Spec.new do |s|
@@ -17,17 +21,21 @@ Pod::Spec.new do |s|
   s.platform         = :macos, '10.15'
   s.static_framework = false
 
-  # Vendored Rust dynamic library
-  s.vendored_libraries = 'Frameworks/libtunes4r.dylib'
+  # Vendored Rust dynamic library, packaged as a universal XCFramework
+  # (arm64 + x86_64). The same artifact is consumed by Swift Package
+  # Manager via macos/Package.swift.
+  s.vendored_frameworks = 'Frameworks/libtunes4r.xcframework'
 
   # Frameworks required by the Rust engine
   s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreAudio', 'Security', 'CoreFoundation'
 
-  # Ensure the dylib is properly signed during code-signing phase
+  # Ensure every slice of the XCFramework is properly signed during
+  # CocoaPods' code-signing phase. CocoaPods doesn't recursively sign
+  # vendored frameworks, so we handle it ourselves.
   s.script_phases = [
     {
-      :name => 'Sign libtunes4r.dylib',
-      :script => 'codesign --force --sign - "${PODS_TARGET_SRCROOT}/macos/Frameworks/libtunes4r.dylib" 2>/dev/null || true',
+      :name => 'Sign libtunes4r.xcframework',
+      :script => 'find "${PODS_TARGET_SRCROOT}/macos/Frameworks/libtunes4r.xcframework" -name "libtunes4r" -type f -exec codesign --force --sign - {} \\; 2>/dev/null || true',
       :execution_position => :after_compile,
     }
   ]

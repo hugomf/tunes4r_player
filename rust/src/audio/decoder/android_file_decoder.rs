@@ -49,10 +49,10 @@ use crate::dsp::RmsSpectrumAnalyzer;
 #[cfg(target_os = "android")]
 use crate::audio::decoder::seek::seek_to_position;
 #[cfg(target_os = "android")]
-use crate::audio::stream::queue_source::AudioBuffer;
+use crate::audio::stream::cpal_source::AudioBuffer;
 
 #[cfg(not(target_os = "android"))]
-use crate::audio::stream::queue_source::AudioBuffer;
+use crate::audio::stream::cpal_source::AudioBuffer;
 
 #[cfg(not(target_os = "android"))]
 use log::warn;
@@ -358,7 +358,7 @@ pub fn play_file_internal(
                 return;
             }
         };
-        let config = match pick_output_config(&device, sample_rate, channels) {
+    let config = match pick_output_config(&device, sample_rate, channels as u16) {
             Some(c) => c,
             None => {
                 let err_msg = "No suitable output config".to_string();
@@ -601,24 +601,17 @@ pub fn decode_and_play_from_read(
     let target_buffer_secs = 7.0;
     let target_buffer_samples = (sample_rate as f32 * target_buffer_secs) as usize * channels;
 
-    // Seek — merged into prebuffer to avoid double-decoding
-    let seek_target_samples = {
-        let target_ms = seek_target_ms.load(Ordering::Relaxed);
-        if target_ms > 0 {
-            seek_target_ms.store(0, Ordering::Relaxed);
-            info!("[stream] Seek target: {} ms", target_ms);
-            (target_ms as f64 / 1000.0 * sample_rate as f64 * channels as f64) as u64
-        } else {
-            0
-        }
-    };
-    let mut samples_to_skip = seek_target_samples;
+    // Seek — merged into prebuffer to avoid double-decoding.
+    // Uses the same shared seek module as the file path, so seek
+    // behavior is consistent across all three platforms (and the iOS
+    // off-by-channels unit bug is structurally impossible here).
+    let target_ms = seek_target_ms.load(Ordering::Relaxed);
 
     let mut buffered_samples = 0;
     let mut prebuffer_error_count = 0;
     let mut last_logged_pct = 0u32;
     const MAX_PACKET_ERRORS: u32 = 30;
-    let mut format = probed;
+    let mut format_reader = probed;
     let mut decoder = match get_codec_registry().make_audio_decoder(
         &codec_params,
         &symphonia::core::codecs::audio::AudioDecoderOptions::default(),
@@ -632,24 +625,87 @@ pub fn decode_and_play_from_read(
         }
     };
 
+    let residual_samples_to_skip = if target_ms > 0 {
+        seek_target_ms.store(0, Ordering::Relaxed);
+        info!("[stream] Seek target: {} ms", target_ms);
+        match seek_to_position(
+            &mut format_reader,
+            &codec_params,
+            track_id,
+            target_ms,
+            &should_stop,
+        ) {
+            Ok(outcome) => {
+                info!(
+                    "[stream] Seek complete: {:?}, residual {} samples",
+                    outcome.method, outcome.residual_samples_to_skip
+                );
+                outcome.residual_samples_to_skip
+            }
+            Err(e) => {
+                let err_msg = format!("Seek failed: {}", e);
+                error!("[stream] {}", err_msg);
+                *load_error.lock() = err_msg;
+                return;
+            }
+        }
+    } else {
+        0
+    };
+    let mut samples_to_skip = residual_samples_to_skip;
+
     info!(
         "[stream] Pre-buffering {} samples ({} seconds)...",
         target_buffer_samples, target_buffer_secs
     );
 
     let queue_for_decode = audio_queue.clone();
-    let sink: MixerDeviceSink = match DeviceSinkBuilder::open_default_sink() {
-        Ok(s) => {
-            info!("[stream] Rodio sink created successfully");
-            s
-        }
-        Err(e) => {
-            let err_msg = format!("Failed to create output stream: {}", e);
+    // cpal output stream (replaces rodio Player + QueueSource + sink).
+    // The callback drains the shared ring buffer; no mixer indirection.
+    let host = cpal::default_host();
+    let device = match host.default_output_device() {
+        Some(d) => d,
+        None => {
+            let err_msg = "No output device".to_string();
             error!("[stream] {}", err_msg);
             *load_error.lock() = err_msg;
             return;
         }
     };
+    let config = match pick_output_config(&device, sample_rate, channels as u16) {
+        Some(c) => c,
+        None => {
+            let err_msg = "No suitable output config".to_string();
+            error!("[stream] {}", err_msg);
+            *load_error.lock() = err_msg;
+            return;
+        }
+    };
+    let stream = match build_output_stream(
+        &device,
+        &config,
+        queue_for_decode.clone(),
+        buffer_ready.clone(),
+        samples_played.clone(),
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            let err_msg = format!("Failed to build output stream: {}", e);
+            error!("[stream] {}", err_msg);
+            *load_error.lock() = err_msg;
+            return;
+        }
+    };
+    if let Err(e) = stream.play() {
+        let err_msg = format!("Failed to start output stream: {}", e);
+        error!("[stream] {}", err_msg);
+        *load_error.lock() = err_msg;
+        return;
+    }
+    info!(
+        "[stream] cpal output stream started ({} Hz, {} ch)",
+        config.sample_rate, config.channels
+    );
 
     while buffered_samples < target_buffer_samples {
         if should_stop.load(Ordering::Relaxed) {
@@ -657,7 +713,7 @@ pub fn decode_and_play_from_read(
             return;
         }
 
-        match format.next_packet() {
+        match format_reader.next_packet() {
             Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
                 Ok(audio_buf) => {
                     prebuffer_error_count = 0;
@@ -728,31 +784,6 @@ pub fn decode_and_play_from_read(
 
     info!("[stream] Pre-buffer complete: {} samples", buffered_samples);
 
-    let starve_counter = Arc::new(AtomicU64::new(0));
-    let done_flag = Arc::new(AtomicBool::new(false));
-    let mut queue_source = QueueSource::new(
-        queue_for_decode.clone(),
-        channels as u16,
-        sample_rate as u32,
-        starve_counter.clone(),
-        samples_played.clone(),
-    );
-    queue_source.set_done(done_flag.clone());
-    info!("[stream] Source sample rate: {} Hz", sample_rate);
-
-    let player = Player::connect_new(sink.mixer());
-
-    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        player.append(queue_source);
-    })) {
-        let msg = format!("player.append panicked: {:?}", e);
-        error!("[stream] {}", msg);
-        *load_error.lock() = msg;
-        return;
-    }
-    player.play();
-    info!("[stream] Player started with QueueSource");
-
     buffer_ready.store(true, Ordering::Relaxed);
     is_playing_flag.store(true, Ordering::Relaxed);
     info!("[stream] buffer_ready and is_playing set to true");
@@ -783,7 +814,7 @@ pub fn decode_and_play_from_read(
             break;
         }
 
-        match format.next_packet() {
+        match format_reader.next_packet() {
             Ok(Some(packet)) if packet.track_id == track_id => {
                 packet_error_count = 0;
                 match decoder.decode(&packet) {
@@ -855,21 +886,24 @@ pub fn decode_and_play_from_read(
         }
     }
 
-    // ── Signal end of stream to QueueSource and drain remaining buffer ──
-    info!("[stream] Decode complete, signaling done and draining buffer");
-    done_flag.store(true, Ordering::Release);
-    queue_source.set_done(done_flag.clone());
-    while should_stop.load(Ordering::Relaxed) == false {
-        if queue_for_decode.lock().len() == 0 || done_flag.load(Ordering::Acquire) {
-            info!("[stream] Queue empty or done, finished draining");
+    // ── Wait for the cpal output stream to drain the remaining queue
+    // (no QueueSource to signal — just empty the buffer or stop).
+    info!("[stream] Decode complete, waiting for output drain");
+    let drain_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !should_stop.load(Ordering::Relaxed) {
+        if queue_for_decode.lock().is_empty() {
+            info!("[stream] Queue empty, done draining");
+            break;
+        }
+        if std::time::Instant::now() > drain_deadline {
+            error!("[stream] Drain timeout — queue still has {} samples", queue_for_decode.lock().len());
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
 
     info!("[stream] Playback complete");
-    drop(player);
-    drop(sink);
+    drop(stream);
     buffer_ready.store(false, Ordering::Relaxed);
     is_playing_flag.store(false, Ordering::Relaxed);
 }

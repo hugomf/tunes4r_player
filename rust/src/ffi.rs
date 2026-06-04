@@ -121,31 +121,35 @@ pub extern "C" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std::ffi
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPlayerPlugin_nativeInit(
-    env: jni::sys::JNIEnv,
-    _class: jni::sys::JClass,
+    env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
 ) {
-    let funcs = *env;
-    if funcs.is_null() {
-        return;
-    }
-    match (*funcs).GetJavaVM {
-        Some(func) => {
-            let mut vm_ptr: *mut jni::sys::JavaVM = std::ptr::null_mut();
-            let result = func(env, &mut vm_ptr as *mut *mut jni::sys::JavaVM);
-            if result == 0 && !vm_ptr.is_null() {
-                ndk_context::initialize_android_context(
-                    vm_ptr as *mut std::ffi::c_void,
-                    std::ptr::null_mut(),
-                );
-                android_logger::init_once(
-                    android_logger::Config::default()
-                        .with_max_level(log::LevelFilter::Debug)
-                        .with_tag("tunes4r"),
-                );
-                log::info!("[ffi] ndk_context initialized via nativeInit");
-            }
+    let env_wrapper = match jni::JNIEnv::from_raw(env) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("[ffi] nativeInit: JNIEnv::from_raw failed: {:?}", e);
+            return;
         }
-        None => {}
+    };
+    let vm = match env_wrapper.get_java_vm() {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[ffi] nativeInit: get_java_vm failed: {:?}", e);
+            return;
+        }
+    };
+    let vm_ptr = vm.get_java_vm_pointer();
+    if !vm_ptr.is_null() {
+        ndk_context::initialize_android_context(
+            vm_ptr as *mut std::ffi::c_void,
+            std::ptr::null_mut(),
+        );
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Debug)
+                .with_tag("tunes4r"),
+        );
+        log::info!("[ffi] ndk_context initialized via nativeInit");
     }
 }
 
