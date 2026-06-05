@@ -1,4 +1,4 @@
-use crate::youtube::formats::StreamFormat;
+use crate::formats::StreamFormat;
 
 #[derive(Debug, Clone)]
 pub struct StreamManifest {

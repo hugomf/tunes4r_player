@@ -200,11 +200,16 @@ class AudioEngine {
     return result;
   }
 
-  /// Play an HTTP stream via the progressive downloader.
+  /// Play an HTTP stream via the pipeline-based playback.
+  /// Uses the auto-detecting play() path (source::from_uri) which
+  /// caches the CDN URL for efficient seeks, unlike the retired
+  /// playStreamWithDownloader path.
   int playStream(String url) {
     _ensureAlive();
     startPolling();
-    final result = _ffi.playStreamWithDownloader(_handle!, url);
+    // Delegate to play() which auto-detects the source type and
+    // builds the correct pipeline (YouTube, radio, etc.).
+    final result = _ffi.play(_handle!, url);
     _positionCtrl.add(_ffi.getPosition(_handle!));
     return result;
   }

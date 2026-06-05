@@ -5,6 +5,7 @@ pub mod decoder;
 pub mod engine;
 pub mod error;
 pub mod http;
+pub mod platform;
 pub mod stream;
 
 pub use engine::PlaybackEngine;

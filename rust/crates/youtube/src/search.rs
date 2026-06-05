@@ -4,7 +4,7 @@
 //! 1. `search()` — HTML scraping of YouTube search results (primary)
 //! 2. `search_videos()` / `search_via_invidious()` — Invidious API (fallback)
 
-use crate::youtube::client::is_valid_video_id;
+use crate::client::is_valid_video_id;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 

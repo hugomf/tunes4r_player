@@ -50,7 +50,7 @@ pub struct PlaybackEngine {
     pub(crate) state: PlaybackState,
     pub(crate) position: PlaybackPosition,
     pub(crate) stream_url: Option<String>,
-    pub(crate) http_client: Arc<HttpClient>,
+    pub http_client: Arc<HttpClient>,
     pub(crate) load_error: Arc<Mutex<String>>,
     pub(crate) band_count: usize,
     pub(crate) sample_rate: Arc<AtomicU64>,
@@ -64,7 +64,7 @@ pub struct PlaybackEngine {
     pub(crate) should_stop: Arc<AtomicBool>,
     pub(crate) samples_played: Arc<AtomicU64>,
     pub(crate) playback_handle: Option<thread::JoinHandle<()>>,
-    pub(crate) stream_pipe: Option<Arc<crate::audio::stream::pipe::PipeWriter>>,
+    pub stream_pipe: Option<Arc<crate::audio::stream::pipe::PipeWriter>>,
     pub(crate) playback_type: Option<PlaybackType>,
     pub(crate) source: Option<Box<dyn StreamSource>>,
     pub(crate) seek_target_ms: Arc<AtomicU64>,
@@ -87,7 +87,13 @@ pub struct PlaybackEngine {
 
     /// Fixed ring buffer capacity in ms. 0 = adaptive (sized by throughput).
     /// Set before `play_pipeline()` and read by the buffer poller thread.
-    pub(crate) buffer_size_ms_fixed: Arc<AtomicU64>,
+    pub buffer_size_ms_fixed: Arc<AtomicU64>,
+
+    /// Monotonic timestamp recorded when a live stream begins downloading.
+    /// The buffer poller uses this to compute `write_offset_ms =
+    /// min(elapsed_since_start_ms, cache_max_ms)` so the live buffer bar
+    /// fills up progressively (rather than showing 100% instantly).
+    pub(crate) live_start_time: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 
 impl PlaybackEngine {

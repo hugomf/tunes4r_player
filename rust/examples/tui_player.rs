@@ -50,6 +50,7 @@ enum Section {
 }
 
 impl Section {
+    #[allow(dead_code)]
     fn label(self) -> &'static str {
         match self {
             Section::File => "File",
@@ -66,6 +67,7 @@ impl Section {
         }
     }
 
+    #[allow(dead_code)]
     fn title(self) -> &'static str {
         match self {
             Section::File => "🎵 Audio File  [1]",
@@ -271,6 +273,7 @@ impl UiState {
 ///
 /// In scrub mode the playhead turns yellow and a `◆` cursor is drawn at
 /// the scrub position rather than the real position.
+#[allow(dead_code)]
 struct ProgressSlider<'a> {
     position_ms: u64,
     total_ms: u64,
@@ -281,6 +284,7 @@ struct ProgressSlider<'a> {
 }
 
 impl<'a> ProgressSlider<'a> {
+    #[allow(dead_code)]
     fn new(position_ms: u64, total_ms: u64, buffer_ms: u64) -> Self {
         Self {
             position_ms,
@@ -291,17 +295,19 @@ impl<'a> ProgressSlider<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn with_scrub(mut self, scrub_ms: u64) -> Self {
         self.scrub_ms = Some(scrub_ms);
         self
     }
 
+    #[allow(dead_code)]
     fn with_annotation(mut self, annotation: Vec<Span<'a>>) -> Self {
         self.annotation = Some(annotation);
         self
     }
 
-    /// Render the slider track + time label into `area`.
+    #[allow(dead_code)]
     fn render(self, f: &mut Frame, area: Rect) {
         let is_scrubbing = self.scrub_ms.is_some();
         let display_pos = self.scrub_ms.unwrap_or(self.position_ms);
@@ -848,7 +854,7 @@ fn render_channel_header(
     inner: Rect,
     section: Section,
     info: &SectionInfo,
-    ui: &UiState,
+    _ui: &UiState,
     is_selected: bool,
     accent: Color,
 ) {
@@ -949,7 +955,7 @@ fn channel_led(info: &SectionInfo) -> (&'static str, Color) {
 fn render_idle_body(
     f: &mut Frame,
     area: Rect,
-    info: &SectionInfo,
+    _info: &SectionInfo,
     section: Section,
     is_selected: bool,
 ) {
@@ -1125,7 +1131,7 @@ fn render_meta_row(
     info: &SectionInfo,
     ui: &UiState,
     is_scrubbing: bool,
-    accent: Color,
+    _accent: Color,
 ) {
     let time_color = if is_scrubbing { Color::Yellow } else { Color::Rgb(200, 200, 220) };
 
@@ -1278,6 +1284,7 @@ fn format_duration(ms: u64) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn format_state(state: &PlaybackState) -> String {
     match state {
         PlaybackState::Playing        => "▶  Playing".into(),

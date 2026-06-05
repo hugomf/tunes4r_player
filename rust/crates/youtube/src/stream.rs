@@ -5,10 +5,10 @@
 //! n-parameter throttle transforms, and proper InnerTube API requests.
 //! Mirrors the youtube_explode_dart and yt-dlp approach.
 
-use crate::youtube::client::{get_yt_clients, is_valid_video_id};
-use crate::youtube::js_engine;
-use crate::youtube::watch::{self, WatchData};
-use crate::youtube::YouTubeService;
+use crate::client::{get_yt_clients, is_valid_video_id};
+use crate::js_engine;
+use crate::watch::{self, WatchData};
+use crate::YouTubeService;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -49,7 +49,7 @@ struct Format {
     #[allow(dead_code)]
     audio_sample_rate: Option<String>,
     /// Approximate duration from streaming data (string or number)
-    #[serde(rename = "approxDurationMs", deserialize_with = "crate::youtube::extractor::deserialize_f64_from_string")]
+    #[serde(rename = "approxDurationMs", deserialize_with = "crate::extractor::deserialize_f64_from_string")]
     #[allow(dead_code)]
     approx_duration_ms: Option<f64>,
 }
@@ -132,7 +132,7 @@ fn parse_cipher_params(cipher: &str) -> HashMap<String, String> {
 
 /// Build an InnerTube player request for a given client.
 fn build_client_request(
-    client: &crate::youtube::client::YtClient,
+    client: &crate::client::YtClient,
     video_id: &str,
     watch_data: &WatchData,
     po_token: Option<&str>,

@@ -122,3 +122,33 @@ pub fn build_http_client() -> reqwest::Client {
             .unwrap_or_default()
     })
 }
+
+/// Standard YouTube CDN request headers (UA, Accept, Referer, Origin).
+///
+/// YouTube's CDN requires a browser-like User-Agent plus Referer/Origin
+/// pointing at youtube.com; otherwise the 206/Range response is rejected
+/// or the audio body is gated.
+pub fn youtube_headers() -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    h.insert(
+        reqwest::header::USER_AGENT,
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            .parse()
+            .expect("valid User-Agent"),
+    );
+    h.insert(
+        reqwest::header::ACCEPT,
+        "audio/*, text/plain, application/octet-stream"
+            .parse()
+            .expect("valid Accept"),
+    );
+    h.insert(
+        reqwest::header::REFERER,
+        "https://www.youtube.com".parse().expect("valid Referer"),
+    );
+    h.insert(
+        reqwest::header::ORIGIN,
+        "https://www.youtube.com".parse().expect("valid Origin"),
+    );
+    h
+}

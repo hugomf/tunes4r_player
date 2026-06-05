@@ -6,10 +6,10 @@
 
 use log::{error, info};
 
-use crate::audio::engine::types::GLOBAL_SPECTRUM;
-use crate::audio::{PlaybackEngine, PlaybackError};
-use crate::dsp::SpectrumAnalyzer;
-use crate::models::{
+use tunes4r_core::audio::engine::types::GLOBAL_SPECTRUM;
+use tunes4r_core::audio::{PlaybackEngine, PlaybackError};
+use tunes4r_core::dsp::SpectrumAnalyzer;
+use tunes4r_core::models::{
     DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState, SpectrumData,
 };
 use std::collections::VecDeque;
@@ -282,7 +282,7 @@ pub extern "C" fn audio_engine_set_spectrum_band_count(handle: *mut AudioEngineH
 /// This should be called before starting playback.
 #[no_mangle]
 pub extern "C" fn audio_engine_set_spectrum_band_count_global(count: i32) {
-    crate::audio::engine::set_band_count(count as usize);
+    tunes4r_core::audio::engine::set_band_count(count as usize);
 }
 
 // ============================================================================
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn audio_engine_play(
     // Spawn a background thread to do the blocking YouTube resolution.
     // The FFI returns immediately, so the Dart UI thread is never blocked.
     thread::spawn(move || {
-        use crate::audio::stream::source;
+        use tunes4r_core::audio::stream::source;
         let result = source::from_uri(&uri_str, http_client, None);
         match result {
             Ok(pipeline) => {
@@ -377,7 +377,7 @@ pub extern "C" fn audio_engine_can_seek(handle: *const AudioEngineHandle) -> boo
             .playback
             .read()
             .unwrap()
-            .source_supports(crate::audio::stream::source::Capability::Seek)
+            .source_supports(tunes4r_core::audio::stream::source::Capability::Seek)
     }));
 
     result.unwrap_or(false)
@@ -394,7 +394,7 @@ pub extern "C" fn audio_engine_can_download(handle: *const AudioEngineHandle) ->
             .playback
             .read()
             .unwrap()
-            .source_supports(crate::audio::stream::source::Capability::Download)
+            .source_supports(tunes4r_core::audio::stream::source::Capability::Download)
     }));
 
     result.unwrap_or(false)
@@ -1069,7 +1069,7 @@ pub unsafe extern "C" fn audio_engine_get_spectrum(
 /// This value should be used to allocate the output buffer for `audio_engine_get_spectrum`.
 #[no_mangle]
 pub extern "C" fn audio_engine_get_spectrum_band_count() -> i32 {
-    crate::dsp::DEFAULT_SPECTRUM_BANDS as i32
+    tunes4r_core::dsp::DEFAULT_SPECTRUM_BANDS as i32
 }
 
 /// Get the current spectrum band count from a specific engine instance.
@@ -1079,10 +1079,10 @@ pub extern "C" fn audio_engine_get_spectrum_band_count_for_engine(
     handle: *mut AudioEngineHandle,
 ) -> i32 {
     if handle.is_null() {
-        return crate::dsp::DEFAULT_SPECTRUM_BANDS as i32;
+        return tunes4r_core::dsp::DEFAULT_SPECTRUM_BANDS as i32;
     }
     // Return the global band count for Android
-    crate::audio::engine::get_band_count() as i32
+    tunes4r_core::audio::engine::get_band_count() as i32
 }
 
 // ============================================================================
@@ -1232,14 +1232,14 @@ pub extern "C" fn audio_engine_get_channels(handle: *const AudioEngineHandle) ->
 // ============================================================================
 
 /// Opaque handle to a YouTube service instance
-pub struct YoutubeServiceHandle(pub crate::youtube::YouTubeService);
+pub struct YoutubeServiceHandle(pub tunes4r_youtube::YouTubeService);
 
 /// Create a new YouTube service instance
 #[no_mangle]
 pub extern "C" fn youtube_service_create() -> *mut YoutubeServiceHandle {
     let result = std::panic::catch_unwind(|| {
         Box::into_raw(Box::new(YoutubeServiceHandle(
-            crate::youtube::YouTubeService::new(),
+            tunes4r_youtube::YouTubeService::new(),
         )))
     });
     match result {
@@ -1276,8 +1276,8 @@ pub unsafe extern "C" fn youtube_search(
             Err(_) => return std::ptr::null_mut(),
         };
 
-        let yt = crate::youtube::YouTube::new();
-        match crate::youtube::search::search(yt.client().http(), query_str, limit as usize) {
+        let yt = tunes4r_youtube::YouTube::new();
+        match tunes4r_youtube::search::search(yt.client().http(), query_str, limit as usize) {
             Ok(results) => {
                 let json = serde_json::to_string(&results).unwrap_or_default();
                 CString::new(json).unwrap().into_raw()
@@ -1316,7 +1316,7 @@ pub unsafe extern "C" fn youtube_get_stream_url(
         );
         let start = std::time::Instant::now();
 
-        let yt = crate::youtube::YouTube::new();
+        let yt = tunes4r_youtube::YouTube::new();
         match yt.videos().stream(video_id_str) {
             Ok(manifest) => {
                 let elapsed = start.elapsed();
@@ -1365,7 +1365,7 @@ pub unsafe extern "C" fn youtube_get_video_info(
             Err(_) => return std::ptr::null_mut(),
         };
 
-        let yt = crate::youtube::YouTube::new();
+        let yt = tunes4r_youtube::YouTube::new();
         match yt.videos().get(video_id_str) {
             Ok(info) => {
                 let json = serde_json::json!({
@@ -1410,7 +1410,7 @@ pub unsafe extern "C" fn youtube_download_audio(
             Err(_) => return -3,
         };
 
-        let yt = crate::youtube::YouTube::new();
+        let yt = tunes4r_youtube::YouTube::new();
         let manifest = match yt.videos().stream(video_id_str) {
             Ok(m) => m,
             Err(e) => {
@@ -1491,7 +1491,8 @@ pub unsafe extern "C" fn youtube_download_audio(
 }
 
 /// Play audio from a YouTube URL, video ID, search query, or direct CDN URL.
-/// Uses adaptive buffering internally.
+/// Uses the pipeline-based playback (YouTubeSource caches the CDN URL,
+/// avoiding re-resolution on seek — unlike the retired adaptive buffer path).
 #[no_mangle]
 pub unsafe extern "C" fn audio_engine_play_youtube(
     handle: *mut AudioEngineHandle,
@@ -1508,18 +1509,16 @@ pub unsafe extern "C" fn audio_engine_play_youtube(
             Err(_) => return -2,
         };
 
-        let cache_dir_str = match CStr::from_ptr(cache_dir).to_str() {
+        let _cache_dir_str = match CStr::from_ptr(cache_dir).to_str() {
             Ok(s) => s,
             Err(_) => return -3,
         };
 
         let engine = unsafe { &mut *handle };
-        match engine
-            .playback
-            .write()
-            .unwrap()
-            .play_adaptive_buffer(url_str, cache_dir_str)
-        {
+        let mut eng = engine.playback.write().unwrap();
+        // play() auto-detects YouTube via source::from_uri and builds a
+        // pipeline with YouTubeSource — the CDN URL is cached for seek.
+        match eng.play(url_str, None) {
             Ok(()) => 0,
             Err(e) => {
                 error!("[ffi] audio_engine_play_youtube failed: {}", e);
@@ -1604,8 +1603,8 @@ pub unsafe extern "C" fn audio_engine_play_live(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::engine::{set_band_count, types::update_global_spectrum};
-    use crate::dsp::RmsSpectrumAnalyzer;
+    use tunes4r_core::audio::engine::{set_band_count, types::update_global_spectrum};
+    use tunes4r_core::dsp::RmsSpectrumAnalyzer;
 
     #[test]
     fn test_engine_lifecycle() {

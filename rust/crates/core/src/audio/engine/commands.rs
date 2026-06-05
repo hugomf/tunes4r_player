@@ -15,12 +15,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-#[cfg(target_os = "android")]
-use reqwest::Client as AsyncClient;
-
-#[cfg(not(target_os = "android"))]
-use reqwest::blocking::Client as AsyncClient;
-
 impl PlaybackEngine {
     /// Play a URI with auto-detected source type and auto-configured pipeline.
     ///
@@ -171,7 +165,7 @@ impl PlaybackEngine {
                 #[cfg(target_os = "android")]
                 match source_kind_for_android {
                     crate::audio::stream::source::SourceKind::File => {
-                        crate::audio::decoder::android_file_decoder::play_file_internal(
+                        crate::audio::decoder::file_decoder::play_file_internal(
                             file_path_for_android,
                             audio_queue,
                             buffer_ready,
@@ -186,7 +180,7 @@ impl PlaybackEngine {
                         );
                     }
                     _ => {
-                        crate::audio::decoder::android_file_decoder::decode_and_play_from_read(
+                        crate::audio::decoder::file_decoder::decode_and_play_from_read(
                             reader,
                             audio_queue,
                             buffer_ready,
@@ -400,6 +394,7 @@ impl PlaybackEngine {
             event_queue: Arc::new(Mutex::new(VecDeque::new())),
             live_ring: None,
             buffer_size_ms_fixed: Arc::new(AtomicU64::new(0)),
+            live_start_time: Arc::new(std::sync::Mutex::new(None)),
         })
     }
 
@@ -457,7 +452,7 @@ impl PlaybackEngine {
         let _playback_type = self.playback_type.clone();
 
         #[cfg(target_os = "android")]
-        let play_fn = crate::audio::decoder::android_file_decoder::play_file_internal;
+        let play_fn = crate::audio::decoder::file_decoder::play_file_internal;
         #[cfg(not(target_os = "android"))]
         let play_fn = crate::audio::decoder::file_decoder::play_file_internal;
 
@@ -502,87 +497,13 @@ impl PlaybackEngine {
         Ok(())
     }
 
-    /// Plays an HTTP stream.
+    /// Plays an HTTP stream — delegates to `play()` for pipeline-based playback.
+    /// The legacy `play_stream_internal` path is retired; `play()` auto-detects
+    /// the source type via `source::from_uri` and builds the correct pipeline
+    /// (YouTubeSource caches the CDN URL, radio uses RadioSource, etc.).
     pub fn play_stream(&mut self, url: &str) -> Result<(), PlaybackError> {
-        info!("[playback] play_stream: loading from {}", url);
-        self.should_stop.store(true, Ordering::Relaxed);
-        self.state = PlaybackState::Connecting;
-        self.load_error.lock().clear();
-        let url_owned = url.to_string();
-        self.stream_url = Some(url_owned.clone());
-        self.samples_played.store(0, Ordering::Relaxed);
-        self.total_duration_ms.store(0, Ordering::Relaxed);
-        {
-            let mut q = self.audio_queue.lock();
-            q.clear();
-        }
-        self.buffer_ready.store(false, Ordering::Relaxed);
-        self.playback_type = Some(PlaybackType::Stream {
-            url: url_owned.clone(),
-            seek_byte_offset: 0,
-        });
-
-        if let Some(handle) = self.playback_handle.take() {
-            debug!("[playback] Stopping previous playback thread");
-            Self::join_with_timeout(handle, "play_stream");
-            debug!("[playback] Previous playback thread stopped");
-        }
-        self.should_stop.store(false, Ordering::Relaxed);
-
-        let audio_queue = self.audio_queue.clone();
-        let buffer_ready = self.buffer_ready.clone();
-        let is_playing_flag = self.is_playing_flag.clone();
-        let should_stop = self.should_stop.clone();
-        let samples_played = self.samples_played.clone();
-        let sample_rate = self.sample_rate.clone();
-        let channels = self.channels.clone();
-        let total_duration_ms = self.total_duration_ms.clone();
-        let load_error = self.load_error.clone();
-        let client = self.http_client.clone();
-        let seek_target_ms = self.seek_target_ms.clone();
-        let _playback_type = self.playback_type.clone();
-        let pipe_bytes_sent = self.pipe_bytes_sent.clone();
-        let pipe_total_bytes = self.pipe_total_bytes.clone();
-
-        #[cfg(target_os = "android")]
-        let play_fn = crate::audio::decoder::android_file_decoder::play_stream_internal;
-        #[cfg(not(target_os = "android"))]
-        let play_fn = crate::audio::stream::handling::play_stream_internal;
-
-        let handle = thread::spawn(move || {
-            play_fn(
-                url_owned,
-                client,
-                audio_queue,
-                buffer_ready,
-                is_playing_flag,
-                should_stop,
-                samples_played,
-                sample_rate,
-                channels,
-                total_duration_ms,
-                load_error,
-                seek_target_ms,
-                0,
-                pipe_bytes_sent,
-                pipe_total_bytes,
-            );
-        });
-
-        self.playback_handle = Some(handle);
-        self.state = PlaybackState::Buffering {
-            buffered_bytes: 0,
-            total_bytes: None,
-        };
-
-        // NOTE: We deliberately do NOT block here waiting for buffer_ready.
-        // The Dart UI thread calls this method via FFI, and a blocking
-        // wait would freeze the entire UI for up to 30 seconds (especially
-        // painful on YouTube seeks, where the stream thread spends several
-        // seconds resolving the CDN URL and pre-buffering). The client
-        // subscribes to playbackEventStream and downloadBufferStream to
-        // observe state transitions and buffer progress asynchronously.
-        Ok(())
+        info!("[playback] play_stream: delegating to play() for {}", url);
+        self.play(url, None)
     }
 
     /// Play a live internet stream with backward seek via ring buffer.
@@ -609,6 +530,16 @@ impl PlaybackEngine {
         let ring = std::sync::Arc::new(std::sync::Mutex::new(crate::models::LiveByteRing::new(cache_max_ms, 128_000)));
         self.live_ring = Some(Arc::clone(&ring));
 
+        // BUG-3 fix: set self.source so source_supports(Capability::Seek) returns true
+        // for live streams. Without this, engine.source is None and canSeek stays false.
+        self.source = Some(Box::new(
+            crate::audio::stream::source::live::LiveSource::new(
+                url,
+                self.http_client.clone(),
+                cache_max_ms,
+            ),
+        ));
+
         if let Some(handle) = self.playback_handle.take() {
             Self::join_with_timeout(handle, "play_live");
         }
@@ -627,6 +558,10 @@ impl PlaybackEngine {
         let seek_target_ms = self.seek_target_ms.clone();
         let pipe_bytes_sent = self.pipe_bytes_sent.clone();
         let pipe_total_bytes = self.pipe_total_bytes.clone();
+
+        // Record the monotonic start time so the buffer poller can compute
+        // write_offset_ms = min(elapsed_since_start_ms, cache_max_ms).
+        *self.live_start_time.lock().unwrap() = Some(std::time::Instant::now());
 
         #[cfg(not(target_os = "android"))]
         let handle = thread::spawn(move || {
@@ -652,7 +587,7 @@ impl PlaybackEngine {
 
         #[cfg(target_os = "android")]
         let handle = thread::spawn(move || {
-            crate::audio::decoder::android_file_decoder::play_live_internal(
+            crate::audio::decoder::file_decoder::play_live_internal(
                 url_owned,
                 audio_queue,
                 buffer_ready,
@@ -663,6 +598,7 @@ impl PlaybackEngine {
                 channels,
                 total_duration_ms,
                 load_error,
+                seek_target_ms,
                 pipe_bytes_sent,
                 pipe_total_bytes,
                 cache_max_ms,
@@ -670,6 +606,56 @@ impl PlaybackEngine {
             );
         });
         self.playback_handle = Some(handle);
+
+        // Spawn buffer poller for live stream: fills the DownloadBuffer
+        // using elapsed wall-clock time rather than pipe bytes, so the UI
+        // shows the buffer filling progressively up to cache_max_ms.
+        let buf_poller_download_buffer = self.download_buffer.clone();
+        let buf_poller_should_stop = self.should_stop.clone();
+        let buf_poller_samples_played = self.samples_played.clone();
+        let buf_poller_sample_rate = self.sample_rate.clone();
+        let buf_poller_channels = self.channels.clone();
+        let buf_poller_total_ms = self.total_duration_ms.clone();
+        let buf_poller_start_time = self.live_start_time.clone();
+        let buf_poller = thread::Builder::new()
+            .name("buffer-poller".into())
+            .spawn(move || {
+                let mut last = DownloadBuffer::default();
+                while !buf_poller_should_stop.load(Ordering::Relaxed) {
+                    let total_ms = buf_poller_total_ms.load(Ordering::Relaxed);
+                    let sp = buf_poller_samples_played.load(Ordering::Relaxed);
+                    let sr = buf_poller_sample_rate.load(Ordering::Relaxed).max(1);
+                    let ch = buf_poller_channels.load(Ordering::Relaxed).max(1);
+                    let playhead_ms = ((sp as f64 / (sr as f64 * ch as f64)) * 1000.0) as u64;
+
+                    let elapsed = {
+                        let guard = buf_poller_start_time.lock().unwrap();
+                        guard.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
+                    };
+
+                    let capacity_ms = total_ms;
+                    let read_offset = playhead_ms.min(total_ms);
+                    let write_offset = elapsed.min(total_ms);
+                    let new_buf = DownloadBuffer {
+                        capacity_ms,
+                        read_offset_ms: read_offset,
+                        write_offset_ms: write_offset.max(read_offset),
+                        total_ms,
+                        is_complete: false,
+                    };
+                    if new_buf != last {
+                        *buf_poller_download_buffer.lock() = new_buf;
+                        last = new_buf;
+                    }
+                    thread::sleep(std::time::Duration::from_millis(200));
+                }
+            })
+            .map_err(|e| PlaybackError::ThreadSpawn {
+                operation: "buffer-poller".into(),
+                detail: e.to_string(),
+            })?;
+        self.buffer_poller_handle = Some(buf_poller);
+
         Ok(())
     }
 
@@ -775,10 +761,13 @@ impl PlaybackEngine {
                                 Self::join_with_timeout(handle, "stream-seek-restart");
                             }
 
-                            // Reopen source from byte 0 (for format probing).
-                            // The seek_target_ms will fast-forward to the
-                            // correct position after probing.
-                            let reader = match source.open(None) {
+                            // Open source at the target position via HTTP Range header.
+                            // YouTubeSource.open(Some(ms)) uses a Range request so we
+                            // skip the byte-0 download + decode-and-discard entirely.
+                            // seek_target_ms is cleared here; decode_and_play_from_read
+                            // no longer needs to fast-forward.
+                            self.seek_target_ms.store(0, Ordering::Relaxed);
+                            let reader = match source.open(Some(position_ms)) {
                                 Ok(r) => r,
                                 Err(e) => {
                                     error!("[engine] Source reopen for seek failed: {}", e);
@@ -857,7 +846,7 @@ impl PlaybackEngine {
                     let seek_target = self.seek_target_ms.clone();
 
                     #[cfg(target_os = "android")]
-                    let play_fn = crate::audio::decoder::android_file_decoder::play_file_internal;
+                    let play_fn = crate::audio::decoder::file_decoder::play_file_internal;
                     #[cfg(not(target_os = "android"))]
                     let play_fn = crate::audio::decoder::file_decoder::play_file_internal;
 
@@ -938,7 +927,7 @@ impl PlaybackEngine {
 
                     #[cfg(target_os = "android")]
                     let play_fn =
-                        crate::audio::decoder::android_file_decoder::play_stream_from_pipe_internal;
+                        crate::audio::decoder::file_decoder::play_stream_from_pipe_internal;
                     #[cfg(not(target_os = "android"))]
                     let play_fn = crate::audio::stream::handling::play_stream_from_pipe_internal;
 
@@ -1005,81 +994,27 @@ impl PlaybackEngine {
 
                     #[cfg(target_os = "android")]
                     let handle = thread::spawn(move || {
-                        crate::audio::decoder::android_file_decoder::play_live_internal(
+                        crate::audio::decoder::file_decoder::play_live_internal(
                             seek_url, audio_queue, buffer_ready,
                             is_playing_flag, should_stop, samples_played,
                             sample_rate, channels, total_duration_ms,
-                            load_error, pipe_bytes_sent, pipe_total_bytes, cache_max_ms,
+                            load_error, seek_target_ms,
+                            pipe_bytes_sent, pipe_total_bytes, cache_max_ms,
                             ring,
                         );
                     });
                     self.playback_handle = Some(handle);
                 }
-                PlaybackType::AdaptiveBuffer { url, cache_dir, .. } => {
-                    // For adaptive buffer, we need to restart both the fetch and decode threads
+                PlaybackType::AdaptiveBuffer { url, .. } => {
+                    // Retired path: delegate to play() which auto-detects source
+                    // via pipeline (YouTubeSource caches CDN URL for efficient
+                    // Range-based seeks).  The old adaptive buffer path re-resolved
+                    // the YouTube manifest on every seek (BUG-4).
                     info!(
-                        "[engine] Restarting adaptive buffer playback for seek to {} ms",
+                        "[engine] AdaptiveBuffer seek retired, delegating to play() for {} ms",
                         position_ms
                     );
-                    self.should_stop.store(true, Ordering::Relaxed);
-                    self.buffer_ready.store(false, Ordering::Relaxed);
-                    {
-                        let mut q = self.audio_queue.lock();
-                        q.clear();
-                    }
-                    self.samples_played.store(0, Ordering::Relaxed);
-                    self.seek_target_ms.store(position_ms, Ordering::Relaxed);
-
-                    // Stop old decode thread
-                    if let Some(handle) = self.playback_handle.take() {
-                        Self::join_with_timeout(handle, "adaptive-buffer-seek-restart");
-                    }
-
-                    // Create a fresh pipe for the restarted decode thread.
-                    // play_adaptive_buffer_internal doesn't actually read from
-                    // the pipe (it downloads via HTTP directly), but the
-                    // function signature requires a PipeWriter.
-                    let (pipe_writer, _pipe_reader) = crate::audio::stream::pipe::new_pipe();
-                    let pipe_writer = Arc::new(pipe_writer);
-                    self.stream_pipe = Some(pipe_writer.clone());
-
-                    self.should_stop.store(false, Ordering::Relaxed);
-
-                    let audio_queue = self.audio_queue.clone();
-                    let buffer_ready = self.buffer_ready.clone();
-                    let is_playing_flag = self.is_playing_flag.clone();
-                    let should_stop = self.should_stop.clone();
-                    let samples_played = self.samples_played.clone();
-                    let sample_rate = self.sample_rate.clone();
-                    let channels = self.channels.clone();
-                    let total_duration_ms = self.total_duration_ms.clone();
-                    let load_error = self.load_error.clone();
-                    let seek_target_ms = Arc::new(AtomicU64::new(position_ms));
-
-                    #[cfg(target_os = "android")]
-                    let play_fn =
-                        crate::audio::decoder::android_file_decoder::play_adaptive_buffer_internal;
-                    #[cfg(not(target_os = "android"))]
-                    let play_fn = crate::audio::stream::handling::play_adaptive_buffer_internal;
-
-                    let handle = thread::spawn(move || {
-                        play_fn(
-                            pipe_writer,
-                            audio_queue,
-                            buffer_ready,
-                            is_playing_flag,
-                            should_stop,
-                            samples_played,
-                            sample_rate,
-                            channels,
-                            total_duration_ms,
-                            load_error,
-                            seek_target_ms,
-                            url,
-                            cache_dir,
-                        );
-                    });
-                    self.playback_handle = Some(handle);
+                    return self.play(&url, None);
                 }
             }
         }
@@ -1166,7 +1101,7 @@ impl PlaybackEngine {
         let _seek_target_ms = self.seek_target_ms.clone();
 
         #[cfg(target_os = "android")]
-        let play_fn = crate::audio::decoder::android_file_decoder::play_stream_from_pipe_internal;
+        let play_fn = crate::audio::decoder::file_decoder::play_stream_from_pipe_internal;
         #[cfg(not(target_os = "android"))]
         let play_fn = crate::audio::stream::handling::play_stream_from_pipe_internal;
 
@@ -1208,202 +1143,161 @@ impl PlaybackEngine {
         Ok(())
     }
 
-    /// Plays a stream with adaptive buffering and caching.
+    /// Legacy — delegates to `play()` which auto-detects source via pipeline.
+    /// The adaptive buffer path is retired because it re-resolved the YouTube
+    /// manifest on every seek (BUG-4).  `play()` + `YouTubeSource` cache the
+    /// CDN URL and use Range headers for efficient seeks.
     pub fn play_adaptive_buffer(
         &mut self,
         url: &str,
-        cache_dir: &str,
+        _cache_dir: &str,
     ) -> Result<(), PlaybackError> {
         info!(
-            "[playback] play_adaptive_buffer: loading from {} with cache at {}",
-            url, cache_dir
-        );
-        self.should_stop.store(true, Ordering::Relaxed);
-        self.state = PlaybackState::Connecting;
-        self.load_error.lock().clear();
-        let url_owned = url.to_string();
-        let cache_dir_owned = cache_dir.to_string();
-        self.stream_url = Some(url_owned.clone());
-        self.samples_played.store(0, Ordering::Relaxed);
-        self.total_duration_ms.store(0, Ordering::Relaxed);
-        {
-            let mut q = self.audio_queue.lock();
-            q.clear();
-        }
-        self.buffer_ready.store(false, Ordering::Relaxed);
-        self.playback_type = Some(PlaybackType::AdaptiveBuffer {
-            url: url_owned.clone(),
-            video_id: None,
-            cache_dir: cache_dir_owned.clone(),
-        });
-
-        let (pipe_writer, _pipe_reader) = crate::audio::stream::pipe::new_pipe();
-        let pipe_writer = Arc::new(pipe_writer);
-        self.stream_pipe = Some(pipe_writer.clone());
-
-        if let Some(handle) = self.playback_handle.take() {
-            debug!("[playback] Stopping previous playback thread");
-            Self::join_with_timeout(handle, "play_adaptive_buffer");
-            debug!("[playback] Previous playback thread stopped");
-        }
-        self.should_stop.store(false, Ordering::Relaxed);
-
-        let audio_queue = self.audio_queue.clone();
-        let buffer_ready = self.buffer_ready.clone();
-        let is_playing_flag = self.is_playing_flag.clone();
-        let should_stop = self.should_stop.clone();
-        let samples_played = self.samples_played.clone();
-        let sample_rate = self.sample_rate.clone();
-        let channels = self.channels.clone();
-        let total_duration_ms = self.total_duration_ms.clone();
-        let load_error = self.load_error.clone();
-        let seek_target_ms = self.seek_target_ms.clone();
-
-        #[cfg(target_os = "android")]
-        let play_fn = crate::audio::decoder::android_file_decoder::play_adaptive_buffer_internal;
-        #[cfg(not(target_os = "android"))]
-        let play_fn = crate::audio::stream::handling::play_adaptive_buffer_internal;
-
-        let handle = thread::spawn(move || {
-            play_fn(
-                pipe_writer,
-                audio_queue,
-                buffer_ready,
-                is_playing_flag,
-                should_stop,
-                samples_played,
-                sample_rate,
-                channels,
-                total_duration_ms,
-                load_error,
-                seek_target_ms,
-                url_owned,
-                cache_dir_owned,
-            );
-        });
-
-        self.playback_handle = Some(handle);
-        self.state = PlaybackState::Buffering {
-            buffered_bytes: 0,
-            total_bytes: None,
-        };
-
-        let start_time = std::time::Instant::now();
-        while !self.buffer_ready.load(Ordering::Relaxed)
-            && start_time.elapsed() < Duration::from_secs(30)
-        {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if !self.buffer_ready.load(Ordering::Relaxed) {
-            let err = self.load_error.lock().clone();
-            if err.is_empty() {
-                warn!("[playback] Adaptive buffer playback failed to start within timeout");
-            } else {
-                error!("[playback] Adaptive buffer playback error: {}", err);
-            }
-        }
-        Ok(())
-    }
-
-    /// Plays a stream using stream_download crate for progressive download.
-    pub fn play_stream_with_downloader(&mut self, url: &str) -> Result<(), PlaybackError> {
-        info!(
-            "[playback] play_stream_with_downloader: loading from {}",
+            "[playback] play_adaptive_buffer: delegating to play() for {}",
             url
         );
-        self.should_stop.store(true, Ordering::Relaxed);
-        self.state = PlaybackState::Connecting;
-        self.load_error.lock().clear();
-        let url_owned = url.to_string();
-        self.stream_url = Some(url_owned.clone());
-        self.samples_played.store(0, Ordering::Relaxed);
-        self.total_duration_ms.store(0, Ordering::Relaxed);
+        self.play(url, None)
+    }
+
+    /// Plays a stream — delegates to `play()` for pipeline-based playback.
+    /// The legacy `play_stream_internal` / `play_stream_with_downloader_internal`
+    /// paths are retired in favour of `play()` which auto-detects the source.
+    pub fn play_stream_with_downloader(&mut self, url: &str) -> Result<(), PlaybackError> {
+        info!(
+            "[playback] play_stream_with_downloader: delegating to play() for {}",
+            url
+        );
+        self.play(url, None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The live buffer poller must spawn when play_live() is called and
+    /// must produce write_offset_ms that tracks elapsed wall-clock time
+    /// (capped at cache_max_ms), with is_complete = false (a live stream
+    /// is never finished).
+    #[test]
+    fn test_live_buffer_poller_progressive_fill() {
+        let mut engine = PlaybackEngine::new().expect("create engine");
+        let cache_max_ms = 30_000; // 30 s window
+
+        // play_live starts a background download thread; that thread
+        // will fail to connect because the URL is fake, but the buffer
+        // poller thread is independent and starts running immediately.
+        let _ = engine.play_live("http://127.0.0.1:1/nonexistent", cache_max_ms);
+
+        // live_start_time must be set by play_live.
         {
-            let mut q = self.audio_queue.lock();
-            q.clear();
-        }
-        self.buffer_ready.store(false, Ordering::Relaxed);
-        self.playback_type = Some(PlaybackType::Stream {
-            url: url_owned.clone(),
-            seek_byte_offset: 0,
-        });
-
-        if let Some(handle) = self.playback_handle.take() {
-            debug!("[playback] Stopping previous playback thread");
-            Self::join_with_timeout(handle, "play_stream_with_downloader");
-            debug!("[playback] Previous playback thread stopped");
-        }
-        self.should_stop.store(false, Ordering::Relaxed);
-
-        let audio_queue = self.audio_queue.clone();
-        let buffer_ready = self.buffer_ready.clone();
-        let is_playing_flag = self.is_playing_flag.clone();
-        let should_stop = self.should_stop.clone();
-        let samples_played = self.samples_played.clone();
-        let sample_rate = self.sample_rate.clone();
-        let channels = self.channels.clone();
-        let total_duration_ms = self.total_duration_ms.clone();
-        let load_error = self.load_error.clone();
-        let seek_target_ms = self.seek_target_ms.clone();
-        let pipe_bytes_sent = self.pipe_bytes_sent.clone();
-        let pipe_total_bytes = self.pipe_total_bytes.clone();
-
-        let handle = thread::spawn(move || {
-            #[cfg(target_os = "android")]
-            crate::audio::decoder::android_file_decoder::play_stream_with_downloader_internal(
-                url_owned,
-                audio_queue,
-                buffer_ready,
-                is_playing_flag,
-                should_stop,
-                samples_played,
-                sample_rate,
-                channels,
-                total_duration_ms,
-                load_error,
-                seek_target_ms,
-                0,
+            let guard = engine.live_start_time.lock().unwrap();
+            assert!(
+                guard.is_some(),
+                "live_start_time should be Some after play_live"
             );
-            #[cfg(not(target_os = "android"))]
-            crate::audio::stream::handling::play_stream_internal(
-                url_owned,
-                Arc::new(AsyncClient::new()),
-                audio_queue,
-                buffer_ready,
-                is_playing_flag,
-                should_stop,
-                samples_played,
-                sample_rate,
-                channels,
-                total_duration_ms,
-                load_error,
-                seek_target_ms,
-                0,
-                pipe_bytes_sent,
-                pipe_total_bytes,
-            );
-        });
+        }
 
-        self.playback_handle = Some(handle);
-        self.state = PlaybackState::Buffering {
-            buffered_bytes: 0,
-            total_bytes: None,
+        // The buffer poller must have been spawned.
+        assert!(
+            engine.buffer_poller_handle.is_some(),
+            "buffer_poller_handle should be Some after play_live"
+        );
+
+        // Give the buffer poller a chance to tick once (200 ms interval).
+        thread::sleep(Duration::from_millis(300));
+
+        // After a brief wait, the buffer should show:
+        //   - write_offset_ms > 0 (elapsed time)
+        //   - write_offset_ms <= cache_max_ms (clamped)
+        //   - is_complete == false (live is never complete)
+        let buf = {
+            let g = engine.download_buffer.lock();
+            *g
         };
+        assert!(
+            buf.write_offset_ms > 0,
+            "write_offset_ms should advance after a tick, got {}",
+            buf.write_offset_ms
+        );
+        assert!(
+            buf.write_offset_ms <= cache_max_ms,
+            "write_offset_ms should be capped at cache_max_ms ({})",
+            cache_max_ms
+        );
+        assert!(
+            !buf.is_complete,
+            "live buffer should never be complete"
+        );
+        assert!(
+            buf.write_offset_ms >= buf.read_offset_ms,
+            "write_offset_ms ({}) >= read_offset_ms ({}) invariant violated",
+            buf.write_offset_ms,
+            buf.read_offset_ms
+        );
 
-        let start_time = std::time::Instant::now();
-        while !self.buffer_ready.load(Ordering::Relaxed)
-            && start_time.elapsed() < Duration::from_secs(30)
-        {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if !self.buffer_ready.load(Ordering::Relaxed) {
-            let err = self.load_error.lock().clone();
-            if err.is_empty() {
-                warn!("[playback] Stream with downloader failed to start within timeout");
-            } else {
-                error!("[playback] Stream with downloader error: {}", err);
-            }
-        }
-        Ok(())
+        // Clean up.
+        engine.stop();
+    }
+
+    // ── BUG-3 regression: play_live() must set self.source so          ──
+    // source_supports(Seek) returns true for live streams.
+    #[test]
+    fn test_play_live_sets_source_for_can_seek() {
+        let mut engine = PlaybackEngine::new().expect("create engine");
+        let _ = engine.play_live("http://127.0.0.1:1/nonexistent", 30_000);
+
+        assert!(
+            engine.source.is_some(),
+            "source should be Some after play_live"
+        );
+        assert!(
+            engine.source_supports(crate::audio::stream::source::Capability::Seek),
+            "source_supports(Seek) should be true after play_live (BUG-3)"
+        );
+
+        engine.stop();
+    }
+
+    // ── BUG-4 regression: deprecated functions must delegate to play() ──
+    // without crashing or returning Err.  These tests call the methods
+    // with a fake URL — the pipeline will fail to connect, but the
+    // delegation itself must not produce an unexpected error.
+
+    #[test]
+    fn test_play_stream_delegates_to_play() {
+        let mut engine = PlaybackEngine::new().expect("create engine");
+        let result = engine.play_stream("http://127.0.0.1:1/nonexistent");
+        // The method should accept the call (delegation) and return the
+        // same error that play() would produce for a non-existent URL.
+        assert!(
+            result.is_err(),
+            "play_stream should delegate to play() and return its error, got {:?}",
+            result
+        );
+        engine.stop();
+    }
+
+    #[test]
+    fn test_play_stream_with_downloader_delegates_to_play() {
+        let mut engine = PlaybackEngine::new().expect("create engine");
+        let result = engine.play_stream_with_downloader("http://127.0.0.1:1/nonexistent");
+        assert!(
+            result.is_err(),
+            "play_stream_with_downloader should delegate to play()"
+        );
+        engine.stop();
+    }
+
+    #[test]
+    fn test_play_adaptive_buffer_delegates_to_play() {
+        let mut engine = PlaybackEngine::new().expect("create engine");
+        let result = engine.play_adaptive_buffer("http://127.0.0.1:1/nonexistent", "/tmp/cache");
+        assert!(
+            result.is_err(),
+            "play_adaptive_buffer should delegate to play()"
+        );
+        engine.stop();
     }
 }

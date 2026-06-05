@@ -1,7 +1,7 @@
-use crate::youtube::client::Client;
-use crate::youtube::client::get_yt_clients;
-use crate::youtube::formats::{AudioQuality, StreamFormat, VideoQuality};
-use crate::youtube::manifest::StreamManifest;
+use crate::client::Client;
+use crate::client::get_yt_clients;
+use crate::formats::{AudioQuality, StreamFormat, VideoQuality};
+use crate::manifest::StreamManifest;
 use serde::Deserialize;
 use serde::Deserializer;
 use std::sync::Arc;
@@ -127,11 +127,11 @@ fn decipher_signature_cipher(
     if let Some(sig) = params.get("s") {
         let sp = params.get("sp").unwrap_or(&"sig");
         let deciphered = if let Some(transforms) = signature_transforms {
-            crate::youtube::watch::apply_signature_transforms(sig, transforms)
+            crate::watch::apply_signature_transforms(sig, transforms)
         } else if let Some(js_code) = player_js_code {
-            crate::youtube::js_engine::decipher_signature(js_code, sig)
+            crate::js_engine::decipher_signature(js_code, sig)
         } else {
-            crate::youtube::js_engine::decipher_signature("", sig)
+            crate::js_engine::decipher_signature("", sig)
         };
         Some(format!("{}&{}={}", base_url, sp, deciphered))
     } else {
@@ -170,7 +170,7 @@ impl StreamExtractor {
         // unauthenticated requests that YouTube may reject or throttle.
         let auto_token = po_token.is_none().then(|| {
             watch_data.visitor_data.as_ref().map(|vd| {
-                crate::youtube::pot::generate_cold_start_token(vd)
+                crate::pot::generate_cold_start_token(vd)
             })
         }).flatten();
         let po_token = po_token.or(auto_token.as_deref());
@@ -179,10 +179,10 @@ impl StreamExtractor {
         let mut signature_transforms: Option<Vec<String>> = None;
 
         if let Some(ref player_js_url) = watch_data.player_js_url {
-            match crate::youtube::watch::fetch_player_js(self.client.http(), player_js_url) {
+            match crate::watch::fetch_player_js(self.client.http(), player_js_url) {
                 Ok(js_code) => {
                     let transforms =
-                        crate::youtube::watch::extract_signature_transforms(&js_code);
+                        crate::watch::extract_signature_transforms(&js_code);
                     if !transforms.is_empty() {
                         signature_transforms = Some(transforms);
                     }
@@ -218,7 +218,7 @@ impl StreamExtractor {
     }
 
     pub fn fetch_watch_page(&self, video_id: &str) -> Result<WatchData, String> {
-        crate::youtube::watch::fetch_watch_page(self.client.http(), video_id)
+        crate::watch::fetch_watch_page(self.client.http(), video_id)
             .map(|wd| WatchData {
                 cookies: wd.cookies,
                 visitor_data: wd.visitor_data,
@@ -229,7 +229,7 @@ impl StreamExtractor {
     pub fn extract_with_client(
         &self,
         video_id: &str,
-        client: &crate::youtube::client::YtClient,
+        client: &crate::client::YtClient,
         watch_data: &WatchData,
         player_js_code: &Option<String>,
         signature_transforms: &Option<Vec<String>>,
@@ -247,7 +247,7 @@ impl StreamExtractor {
     pub fn extract_with_client_po_token(
         &self,
         video_id: &str,
-        client: &crate::youtube::client::YtClient,
+        client: &crate::client::YtClient,
         watch_data: &WatchData,
         player_js_code: &Option<String>,
         signature_transforms: &Option<Vec<String>>,
@@ -266,7 +266,7 @@ impl StreamExtractor {
     pub fn extract_with_client_internal(
         &self,
         video_id: &str,
-        client: &crate::youtube::client::YtClient,
+        client: &crate::client::YtClient,
         watch_data: &WatchData,
         player_js_code: &Option<String>,
         signature_transforms: &Option<Vec<String>>,

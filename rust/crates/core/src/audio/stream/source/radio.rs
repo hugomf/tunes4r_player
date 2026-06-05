@@ -38,7 +38,6 @@ impl StreamSource for RadioSource {
 
     fn supports(&self, capability: Capability) -> bool {
         matches!(capability, Capability::Download)
-        // No Seek (live stream), no Cache (live stream)
     }
 
     fn as_any(&self) -> &dyn std::any::Any { self }

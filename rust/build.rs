@@ -1,4 +1,6 @@
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(frb_expand)");
+
     let target = std::env::var("TARGET").unwrap_or_default();
 
     if target.contains("android") {
@@ -36,9 +38,6 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=src/lib.rs");
-    println!("cargo:rerun-if-changed=src/models.rs");
-    println!("cargo:rerun-if-changed=src/playback.rs");
-    println!("cargo:rerun-if-changed=src/dsp.rs");
     println!("cargo:rerun-if-changed=src/ffi.rs");
 
     #[cfg(feature = "rustls-platform-verifier")]

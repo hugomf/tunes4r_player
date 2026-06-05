@@ -37,7 +37,7 @@ pub fn fetch_and_pipe(url: &str, engine: &AudioEngineHandle) -> Result<(), Strin
 fn fetch_and_pipe_internal(url: &str, engine: ThreadSafeEngineHandle) -> Result<(), String> {
     info!("[fetch] fetch_and_pipe_internal with URL: {}", url);
 
-    let client = crate::audio::http::build_blocking_http_client();
+    let client = tunes4r_core::audio::http::build_blocking_http_client();
     let mut response = client
         .get(url)
         .send()

@@ -2,7 +2,7 @@
 //!
 //! Gets video metadata (title, uploader, duration) via multiple strategies.
 
-use crate::youtube::client::is_valid_video_id;
+use crate::client::is_valid_video_id;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

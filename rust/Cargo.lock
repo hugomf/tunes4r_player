@@ -3415,9 +3415,38 @@ dependencies = [
  "android_logger",
  "cbindgen",
  "cpal",
- "crossbeam",
  "crossterm",
  "flutter_rust_bridge",
+ "jni",
+ "libc",
+ "log",
+ "ndk-context",
+ "parking_lot",
+ "ratatui",
+ "reqwest 0.12.28",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "symphonia-adapter-libopus",
+ "symphonia-bundle-flac",
+ "symphonia-bundle-mp3",
+ "symphonia-codec-aac",
+ "symphonia-codec-vorbis",
+ "thiserror 2.0.18",
+ "tracing-subscriber",
+ "tunes4r-core",
+ "tunes4r-youtube",
+]
+
+[[package]]
+name = "tunes4r-core"
+version = "1.0.0"
+dependencies = [
+ "android_logger",
+ "cpal",
+ "crossbeam",
  "futures",
  "futures-util",
  "id3",
@@ -3428,11 +3457,8 @@ dependencies = [
  "num-complex",
  "num-traits",
  "parking_lot",
- "ratatui",
- "regex",
  "reqwest 0.12.28",
  "ringbuf",
- "rquickjs",
  "rustfft",
  "rustls",
  "rustls-platform-verifier",
@@ -3447,7 +3473,20 @@ dependencies = [
  "symphonia-codec-vorbis",
  "thiserror 2.0.18",
  "tokio",
- "tracing-subscriber",
+ "tunes4r-youtube",
+ "url",
+]
+
+[[package]]
+name = "tunes4r-youtube"
+version = "1.0.0"
+dependencies = [
+ "log",
+ "regex",
+ "reqwest 0.12.28",
+ "rquickjs",
+ "serde",
+ "serde_json",
  "url",
  "urlencoding",
 ]

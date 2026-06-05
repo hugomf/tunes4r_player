@@ -35,10 +35,6 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   int _durationMs = 0;
   bool _canSeek = false;
 
-  // ── Drag state ───────────────────────────────────────────────────────
-  bool _isDragging = false;
-  double _dragValue = 0;
-
   // ── Buffer state ─────────────────────────────────────────────────────
   AdaptiveRingBuffer _buffer = const AdaptiveRingBuffer(
     capacityMs: 0,
@@ -203,79 +199,15 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   /// Only renders the seek bar when [source] is the active source.
   Widget _bufferedSlider(_SourceType source) {
     final isActive = source == _activeSource;
-    final total = isActive && _durationMs > 0 ? _durationMs.toDouble() : 1.0;
-    final value = isActive
-        ? (_isDragging ? _dragValue : _positionMs.toDouble().clamp(0.0, total))
-        : 0.0;
-    final enabled = isActive && _canSeek && _durationMs > 0;
-
-    return SizedBox(
-      height: 48,
-      child: Row(
-        children: [
-          SizedBox(
-            width: 52,
-            child: Text(
-              _formatMs(_positionMs),
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontFeatures: [FontFeature.tabularFigures()],
-                fontSize: 13,
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final sliderWidth = constraints.maxWidth;
-                return GestureDetector(
-                  onTapDown: enabled
-                      ? (d) {
-                          final pos =
-                              d.localPosition.dx / sliderWidth * total;
-                          _commitSeek(pos);
-                        }
-                      : null,
-                  onHorizontalDragUpdate: enabled
-                      ? (d) {
-                          final raw =
-                              d.localPosition.dx / sliderWidth * total;
-                          setState(() =>
-                              _dragValue = raw.clamp(0.0, total));
-                          _isDragging = true;
-                        }
-                      : null,
-                  onHorizontalDragEnd: enabled
-                      ? (_) {
-                          _commitSeek(_dragValue);
-                          setState(() => _isDragging = false);
-                        }
-                      : null,
-                  child: CustomPaint(
-                    size: Size(double.infinity, 32),
-                    painter: _BufferedSliderPainter(
-                      position: value,
-                      total: total,
-                      bufferWrite: _buffer.writeOffsetMs.toDouble(),
-                      bufferTotal: _buffer.totalMs.toDouble(),
-                      enabled: enabled,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 52,
-            child: Text(
-              _formatMs(_durationMs),
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-        ],
-      ),
+    final isLive = source == _SourceType.live;
+    return _BufferedSlider(
+      isActive: isActive,
+      isLive: isLive,
+      positionMs: _positionMs,
+      durationMs: _durationMs,
+      canSeek: _canSeek,
+      buffer: _buffer,
+      onSeek: _commitSeek,
     );
   }
 
@@ -506,6 +438,129 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     _liveController.dispose();
     _engine?.dispose();
     super.dispose();
+  }
+}
+
+// ── BufferedSlider widget ─────────────────────────────────────────────────
+
+/// Seek slider that shows buffer progress and allows dragging/tapping to seek.
+/// Extracted from the inline `_bufferedSlider` method to decouple from
+/// `_activeSource` and remove SRP violation (ARCH-6).
+class _BufferedSlider extends StatefulWidget {
+  final bool isActive;
+  final bool isLive;
+  final int positionMs;
+  final int durationMs;
+  final bool canSeek;
+  final AdaptiveRingBuffer buffer;
+  final void Function(double ms) onSeek;
+
+  const _BufferedSlider({
+    required this.isActive,
+    required this.isLive,
+    required this.positionMs,
+    required this.durationMs,
+    required this.canSeek,
+    required this.buffer,
+    required this.onSeek,
+  });
+
+  @override
+  State<_BufferedSlider> createState() => _BufferedSliderState();
+}
+
+class _BufferedSliderState extends State<_BufferedSlider> {
+  bool _isDragging = false;
+  double _dragValue = 0;
+
+  String _formatMs(int ms) {
+    final s = ms ~/ 1000;
+    final m = s ~/ 60;
+    final r = s % 60;
+    return '$m:${r.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.isActive && widget.durationMs > 0
+        ? widget.durationMs.toDouble()
+        : 1.0;
+    final maxSeek = widget.isLive
+        ? widget.buffer.writeOffsetMs.toDouble().clamp(0.0, total)
+        : total;
+    final value = widget.isActive
+        ? (_isDragging
+            ? _dragValue.clamp(0.0, maxSeek)
+            : widget.positionMs.toDouble().clamp(0.0, total))
+        : 0.0;
+    final enabled = widget.isActive && widget.canSeek && widget.durationMs > 0;
+
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 52,
+            child: Text(
+              _formatMs(widget.positionMs),
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                fontFeatures: [FontFeature.tabularFigures()],
+                fontSize: 13,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final sliderWidth = constraints.maxWidth;
+                return GestureDetector(
+                  onTapDown: enabled
+                      ? (d) {
+                          final pos = (d.localPosition.dx / sliderWidth * total)
+                              .clamp(0.0, maxSeek);
+                          widget.onSeek(pos);
+                        }
+                      : null,
+                  onHorizontalDragUpdate: enabled
+                      ? (d) {
+                          final raw = d.localPosition.dx / sliderWidth * total;
+                          setState(() => _dragValue = raw.clamp(0.0, maxSeek));
+                          _isDragging = true;
+                        }
+                      : null,
+                  onHorizontalDragEnd: enabled
+                      ? (_) {
+                          widget.onSeek(_dragValue);
+                          setState(() => _isDragging = false);
+                        }
+                      : null,
+                  child: CustomPaint(
+                    size: Size(double.infinity, 32),
+                    painter: _BufferedSliderPainter(
+                      position: value,
+                      total: total,
+                      bufferWrite: widget.buffer.writeOffsetMs.toDouble(),
+                      bufferTotal: widget.buffer.totalMs.toDouble(),
+                      enabled: enabled,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 52,
+            child: Text(
+              _formatMs(widget.durationMs),
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

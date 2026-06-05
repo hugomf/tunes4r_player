@@ -1,0 +1,19 @@
+[package]
+name = "tunes4r-youtube"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+urlencoding = "2.1"
+regex = "1.10"
+log = "0.4"
+url = "2.5.8"
+reqwest = { version = "0.12", features = ["json", "stream", "blocking", "rustls-tls", "rustls-tls-native-roots"], default-features = false }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rquickjs = { version = "0.12.0", features = ["macro", "bindgen"] }

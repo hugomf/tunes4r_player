@@ -1,41 +1,26 @@
-//! Tunes4R Audio Engine
+//! Tunes4R Audio Engine — FFI surface crate
 //!
-//! A modular audio playback engine with support for:
-//! - Multiple formats: MP3, FLAC, M4A/AAC, Ogg Vorbis, **Opus**, WAV
-//! - HTTP streaming (Icecast, etc.)
-//! - DSP: FFT spectrum analysis and equalizer
-//!
-//! Architecture follows SOLID principles with separate modules for:
-//! - `models`: Domain data structures
-//! - `playback`: Audio playback engine
-//! - `dsp`: Digital signal processing
-//! - `ffi`: FFI bindings for Flutter integration
+//! Re-exports from tunes4r-core (audio engine, DSP, models) and
+//! tunes4r-youtube (YouTube extraction), plus the FFI bindings for
+//! Flutter integration and the audio_http_fetch legacy module.
 
-#![allow(unexpected_cfgs)]
+pub use tunes4r_core::audio::{self, PlaybackEngine, PlaybackError};
+pub use tunes4r_core::dsp::{self, Equalizer, RmsSpectrumAnalyzer, SpectrumAnalyzer, SpectrumConfig, DEFAULT_SPECTRUM_BANDS};
+pub use tunes4r_core::models::{self, AdaptiveRingBuffer, DownloadBuffer, EqualizerBand, PlaybackPosition, PlaybackState, Song, SpectrumData};
+pub use tunes4r_youtube as youtube;
+pub use tunes4r_youtube::{get_audio_stream_url, get_video_info, search_videos, SearchResult, VideoMetadata, YouTubeService};
 
-pub mod audio;
-pub mod dsp;
 pub mod ffi;
-pub mod models;
-pub mod youtube;
 
 #[cfg(feature = "classifier")]
 pub mod classifier;
 
 pub mod audio_http_fetch;
 
-pub use audio::{PlaybackEngine, PlaybackError};
-pub use dsp::{
-    Equalizer, RmsSpectrumAnalyzer, SpectrumAnalyzer, SpectrumConfig, DEFAULT_SPECTRUM_BANDS,
-};
-pub use models::{AdaptiveRingBuffer, DownloadBuffer, EqualizerBand, PlaybackPosition, PlaybackState, Song, SpectrumData};
-pub use youtube::{SearchResult, VideoMetadata, YouTubeService};
-
-pub use youtube::{get_audio_stream_url, get_video_info, search_videos};
+use flutter_rust_bridge::frb;
 
 #[cfg(feature = "classifier")]
 use classifier::Classifier;
-use flutter_rust_bridge::frb;
 
 /// Initialize logging
 #[frb(init)]
@@ -56,7 +41,6 @@ pub fn init_classifier(model_path: String, tokenizer_path: String) -> Result<(),
 pub fn classify_query(query: String) -> Result<serde_json::Value, String> {
     let classifier =
         Classifier::global().ok_or_else(|| "Classifier not initialized".to_string())?;
-
     let mut guard = classifier.write().map_err(|e| e.to_string())?;
     guard
         .classify(&query)
@@ -70,17 +54,12 @@ pub fn classify_query(query: String) -> Result<serde_json::Value, String> {
 }
 
 /// Create a new playback engine
-///
-/// Returns an opaque handle that can be used with other FFI functions.
 #[frb(sync)]
 pub fn create_playback_engine() -> PlaybackEngine {
     PlaybackEngine::new().expect("Failed to create playback engine")
 }
 
 /// Unified play: auto-detect source type from URI and start playback.
-///
-/// Accepts file paths, HTTP URLs, YouTube URLs/IDs/search queries.
-/// `buffer_size_ms` — optional fixed ring buffer capacity in ms (None = adaptive).
 pub fn play(engine: &mut PlaybackEngine, uri: String, buffer_size_ms: Option<u64>) -> Result<(), String> {
     engine
         .play(&uri, buffer_size_ms)
@@ -89,12 +68,12 @@ pub fn play(engine: &mut PlaybackEngine, uri: String, buffer_size_ms: Option<u64
 
 /// Check whether the current source supports seeking.
 pub fn can_seek(engine: &mut PlaybackEngine) -> bool {
-    engine.source_supports(crate::audio::stream::source::Capability::Seek)
+    engine.source_supports(tunes4r_core::audio::stream::source::Capability::Seek)
 }
 
 /// Check whether the current source supports downloading.
 pub fn can_download(engine: &mut PlaybackEngine) -> bool {
-    engine.source_supports(crate::audio::stream::source::Capability::Download)
+    engine.source_supports(tunes4r_core::audio::stream::source::Capability::Download)
 }
 
 /// Play a local file

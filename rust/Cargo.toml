@@ -1,3 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/youtube",
+]
+
 [package]
 name = "tunes4r"
 version = "1.0.0"
@@ -34,6 +41,7 @@ path = "examples/tui_player.rs"
 [features]
 default = ["rustls-platform-verifier"]
 rustls-platform-verifier = ["dep:rustls-platform-verifier", "dep:rustls"]
+classifier = []
 
 [profile.release]
 panic = "unwind"
@@ -42,54 +50,44 @@ panic = "unwind"
 cbindgen = "0.29.2"
 
 [dependencies]
-cpal = "0.17.3"
+tunes4r-core = { path = "crates/core" }
+tunes4r-youtube = { path = "crates/youtube" }
 flutter_rust_bridge = "2.3"
+log = "0.4"
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+cpal = "0.17.3"
+tracing-subscriber = "0.3"
 symphonia = { version = "0.6", features = ["mp3", "aac", "flac", "vorbis", "ogg", "mkv", "isomp4"] }
 symphonia-bundle-mp3 = "0.6"
 symphonia-codec-aac = "0.6"
 symphonia-codec-vorbis = "0.6"
 symphonia-bundle-flac = "0.6"
 symphonia-adapter-libopus = { version = "0.3", features = ["bundled"] }
-stream-download = { version = "0.24", features = ["registry", "reqwest-rustls"] }
-rustfft = "6.2"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-urlencoding = "2.1"
-regex = "1.10"
-thiserror = "2.0"
-log = "0.4"
-tracing-subscriber = "0.3"
-parking_lot = "0.12"
-crossbeam = "0.8"
-ringbuf = "0.4"
 reqwest = { version = "0.12", features = ["json", "stream", "blocking", "rustls-tls", "rustls-tls-native-roots"], default-features = false }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
-futures = "0.3"
-futures-util = "0.3"
-num-complex = "0.4"
-num-traits = "0.2"
-rustls-platform-verifier = { version = "0.6.2", optional = true}
-rustls = { version = "0.23", features = ["ring"], optional = true }
-url = "2.5.8"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-rquickjs = { version = "0.12.0", features = ["macro", "bindgen"] }
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "rustls-tls-native-roots"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"
 ndk-context = "0.1"
 jni = { version = "0.21", default-features = false }
-log = "0.4"
 android_logger = "0.15"
-symphonia-bundle-mp3 = "0.6"
-symphonia-codec-aac = "0.6"
-symphonia-codec-vorbis = "0.6"
-symphonia-bundle-flac = "0.6"
-stream-download = { version = "0.24", features = ["registry", "reqwest-rustls"] }
 
-[dependencies.id3]
-version = "1.17.0"
+[target.'cfg(target_os = "android")'.dependencies.log]
+version = "0.4"
+
+[dependencies.rustls-platform-verifier]
+version = "0.6.2"
+optional = true
+
+[dependencies.rustls]
+version = "0.23"
+features = ["ring"]
+optional = true
 
 [dev-dependencies]
 ratatui = "0.29"

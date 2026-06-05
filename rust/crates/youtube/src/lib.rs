@@ -309,21 +309,21 @@ impl Videos {
     /// Try to get video info from the InnerTube player API (includes duration)
     fn get_from_player_api(&self, video_id: &str) -> Result<VideoInfo, String> {
         // Fetch watch page for visitor data
-        let watch_data = crate::youtube::watch::fetch_watch_page(self.client.http(), video_id)
+        let watch_data = crate::watch::fetch_watch_page(self.client.http(), video_id)
             .map_err(|_| "Failed to fetch watch page")?;
 
         // Auto-generate cold-start PoToken if none configured
         let po_token = self.po_token.clone().or_else(|| {
             watch_data.visitor_data.clone().map(|vd| {
-                crate::youtube::pot::generate_cold_start_token(&vd)
+                crate::pot::generate_cold_start_token(&vd)
             })
         });
 
         // Build a simple WEB client request
-        let web_client = crate::youtube::client::YtClient {
+        let web_client = crate::client::YtClient {
             name: "WEB".to_string(),
             version: "2.20260114.08.00".to_string(),
-            api_url: crate::youtube::client::yt_api_url(""),
+            api_url: crate::client::yt_api_url(""),
             user_agent: None,
             extra: serde_json::json!({
                 "clientName": "WEB",
@@ -444,7 +444,7 @@ impl Videos {
         // Auto-generate cold-start PoToken if none configured
         let po_token = self.po_token.clone().or_else(|| {
             watch_data.visitor_data.clone().map(|vd| {
-                crate::youtube::pot::generate_cold_start_token(&vd)
+                crate::pot::generate_cold_start_token(&vd)
             })
         });
 
@@ -453,10 +453,10 @@ impl Videos {
 
         if let Some(ref player_js_url) = watch_data.player_js_url {
             if let Ok(js_code) =
-                crate::youtube::watch::fetch_player_js(self.client.http(), player_js_url)
+                crate::watch::fetch_player_js(self.client.http(), player_js_url)
             {
                 let transforms =
-                    crate::youtube::watch::extract_signature_transforms(&js_code);
+                    crate::watch::extract_signature_transforms(&js_code);
                 if !transforms.is_empty() {
                     signature_transforms = Some(transforms);
                 }
@@ -464,7 +464,7 @@ impl Videos {
             }
         }
 
-        let clients = crate::youtube::client::get_yt_clients();
+        let clients = crate::client::get_yt_clients();
         let mut last_error = String::new();
 
         for yt_client in clients.iter() {
