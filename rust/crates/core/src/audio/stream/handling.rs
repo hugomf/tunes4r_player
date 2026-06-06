@@ -449,6 +449,19 @@ pub fn decode_and_play_from_read(
     let target_buffer_samples =
         (output_sample_rate as f32 * 7.0) as usize * channels as usize;
 
+    // Seed samples_played after a seek so get_position() reflects
+    // the actual playback position rather than starting from 0.
+    if seek_pos_ms > 0 {
+        let ch_out = config.channels as u64;
+        let rate_out = output_sample_rate as u64;
+        let initial_samples = (seek_pos_ms * rate_out * ch_out) / 1000;
+        samples_played.store(initial_samples, Ordering::Relaxed);
+        info!(
+            "[stream] Seeded position: {} ms ({} samples at {} Hz, {} ch)",
+            seek_pos_ms, initial_samples, rate_out, ch_out
+        );
+    }
+
     // ── Phase 3: Create decoder ──
     let mut registry = symphonia::core::codecs::registry::CodecRegistry::new();
     registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();

@@ -111,6 +111,9 @@ class AdaptiveRingBuffer {
   /// File-relative position of the last buffered byte.
   int get endMs => readOffsetMs + availableMs;
 
+  /// UI-safe end position: never reads as less than the playhead.
+  int get endMsClamped => endMs > readOffsetMs ? endMs : readOffsetMs;
+
   /// `true` if the user may seek anywhere within `[0, totalMs]`.
   bool get isFullyBuffered => isComplete || (totalMs > 0 && writeOffsetMs >= totalMs);
 

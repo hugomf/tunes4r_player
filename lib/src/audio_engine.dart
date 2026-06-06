@@ -257,12 +257,9 @@ class AudioEngine {
   void seek(int positionMs) {
     _ensureAlive();
     _ffi.seek(_handle!, positionMs);
-    // Synchronous position emission: the native side will seed the
-    // position clock at this target (ExoPlayer-style), so reading it
-    // back here gives the UI an instant, accurate update.
-    try {
-      _positionCtrl.add(_ffi.getPosition(_handle!));
-    } catch (_) {}
+    // The decode thread seeds samples_played asynchronously after probing
+    // the format. The position poller (16ms) will pick up the correct value
+    // shortly — no need to read back here (it would return 0 transiently).
   }
 
   void setVolume(double volume) {

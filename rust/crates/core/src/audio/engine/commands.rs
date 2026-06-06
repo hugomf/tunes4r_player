@@ -764,9 +764,8 @@ impl PlaybackEngine {
                             // Open source at the target position via HTTP Range header.
                             // YouTubeSource.open(Some(ms)) uses a Range request so we
                             // skip the byte-0 download + decode-and-discard entirely.
-                            // seek_target_ms is cleared here; decode_and_play_from_read
-                            // no longer needs to fast-forward.
-                            self.seek_target_ms.store(0, Ordering::Relaxed);
+                            // seek_target_ms is kept so decode_and_play_from_read can
+                            // seed samples_played for accurate position tracking.
                             let reader = match source.open(Some(position_ms)) {
                                 Ok(r) => r,
                                 Err(e) => {
