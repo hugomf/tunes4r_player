@@ -414,6 +414,9 @@ use cpal::traits::HostTrait as CpalHostTrait;
 use cpal::traits::StreamTrait as CpalStreamTrait;
 
 #[cfg(target_os = "android")]
+use std::io::Read;
+
+#[cfg(target_os = "android")]
 static JVM_HANDLE: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
 
 #[cfg(target_os = "android")]
@@ -868,5 +871,108 @@ pub fn play_stream_from_pipe_internal(
         total_duration_ms,
         load_error,
         Arc::new(AtomicU64::new(0)),
+    );
+}
+
+#[cfg(target_os = "android")]
+pub fn play_live_internal(
+    url: String,
+    audio_queue: crate::audio::stream::cpal_source::AudioBuffer,
+    buffer_ready: Arc<AtomicBool>,
+    is_playing_flag: Arc<AtomicBool>,
+    should_stop: Arc<AtomicBool>,
+    samples_played: Arc<AtomicU64>,
+    sample_rate_out: Arc<AtomicU64>,
+    channels_out: Arc<AtomicU64>,
+    total_duration_ms: Arc<AtomicU64>,
+    load_error: Arc<Mutex<String>>,
+    seek_target_ms: Arc<AtomicU64>,
+    _pipe_bytes_sent: Arc<AtomicU64>,
+    _pipe_total_bytes: Arc<AtomicU64>,
+    cache_max_ms: u64,
+    ring: std::sync::Arc<std::sync::Mutex<crate::models::LiveByteRing>>,
+    cache_head_ms: u64,
+) {
+    android_logger::init_once(android_logger::Config::default().with_max_level(LevelFilter::Info));
+    let _jvm = attach_current_thread_to_jvm();
+    log::info!("[live] play_live_internal (Android): {}", url);
+
+    let seek_pos = seek_target_ms.load(Ordering::Relaxed);
+    let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
+        let r = ring.lock().unwrap();
+        let total = r.total_written();
+        let head_ms = cache_head_ms.max(1);
+        let bytes_per_ms = (total as f64) / (head_ms as f64);
+        let target_byte = (seek_pos as f64 * bytes_per_ms) as u64;
+        let clamped = target_byte.min(total.saturating_sub(1));
+        log::info!("[live] Seek: pos={}ms, cache_head={}ms, total_written={}B, bytes_per_ms={:.1}, target_byte={}, clamped={}",
+            seek_pos, cache_head_ms, total, bytes_per_ms, target_byte, clamped);
+        drop(r);
+        Box::new(crate::models::LiveByteReader::new(ring, clamped))
+    } else {
+        let (pipe_writer, pipe_reader) = crate::audio::stream::pipe::new_pipe();
+        let pipe_writer = Arc::new(pipe_writer);
+        let pw = pipe_writer.clone();
+        let ring_clone = ring.clone();
+        let fetch_url = url.clone();
+        thread::spawn(move || {
+            let _jvm = attach_current_thread_to_jvm();
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async move {
+                let client = reqwest::Client::new();
+                let resp = match client
+                    .get(&fetch_url)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                    .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+                    .header("Icy-MetaData", "0")
+                    .send()
+                    .await
+                {
+                    Ok(r) if r.status().is_success() => r,
+                    Ok(r) => {
+                        pw.set_error(format!("HTTP {}", r.status()));
+                        return;
+                    }
+                    Err(e) => {
+                        pw.set_error(format!("Connection failed: {}", e));
+                        return;
+                    }
+                };
+
+                loop {
+                    match resp.chunk().await {
+                        Ok(Some(data)) => {
+                            ring_clone.lock().unwrap().push(&data);
+                            pw.push(&data);
+                        }
+                        Ok(None) => {
+                            pw.end();
+                            return;
+                        }
+                        Err(e) => {
+                            pw.set_error(format!("Stream error: {}", e));
+                            return;
+                        }
+                    }
+                }
+            });
+        });
+
+        Box::new(pipe_reader) as Box<dyn Read + Send + Sync + 'static>
+    };
+
+    total_duration_ms.store(cache_max_ms, Ordering::Relaxed);
+    crate::audio::stream::handling::decode_and_play_from_read(
+        reader,
+        audio_queue,
+        buffer_ready,
+        is_playing_flag,
+        should_stop,
+        samples_played,
+        sample_rate_out,
+        channels_out,
+        total_duration_ms,
+        load_error,
+        seek_target_ms,
     );
 }

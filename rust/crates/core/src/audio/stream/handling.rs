@@ -716,6 +716,7 @@ pub fn play_live_internal(
     _pipe_total_bytes: Arc<AtomicU64>,
     cache_max_ms: u64,
     ring: std::sync::Arc<std::sync::Mutex<crate::models::LiveByteRing>>,
+    cache_head_ms: u64,
 ) {
     info!("[live] play_live_internal: {}", url);
 
@@ -723,20 +724,22 @@ pub fn play_live_internal(
 
     // Determine if we should read from cached ring (seek) or download fresh.
     let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
-        // Seek: calculate byte offset within the ring buffer.
-        // INVARIANT: seek_pos is absolute ms from playback start, not a delta from the live edge.
+        // Seek: map seek_pos (absolute ms from start) to an absolute byte
+        // offset in the ring buffer stream.
+        // cache_head_ms is the actual elapsed wall-clock time (capped at
+        // cache_max_ms), computed in commands.rs from live_start_time.
+        // This gives us the true bytes-per-ms ratio regardless of the
+        // stream's actual bitrate — unlike the old fill_ratio approach
+        // which assumed 128kbps and gave wrong results for lower-bitrate
+        // streams like BBC World Service (~38kbps).
         let r = ring.lock().unwrap();
         let total = r.total_written();
-        let bytes_per_ms = if cache_max_ms > 0 {
-            (total as f64) / (cache_max_ms as f64)
-        } else {
-            128.0
-        };
-        // ms_ago: how far back from the live edge the seek target is.
-        let ms_ago = cache_max_ms.saturating_sub(seek_pos);
-        let byte_offset_from_live_edge = (ms_ago as f64 * bytes_per_ms) as u64;
-        let clamped = total.saturating_sub(byte_offset_from_live_edge);
-        info!("[live] Seek to {}ms ({}ms ago from live edge), byte offset ~{}, ring total_written={}", seek_pos, ms_ago, clamped, total);
+        let head_ms = cache_head_ms.max(1);
+        let bytes_per_ms = (total as f64) / (head_ms as f64);
+        let target_byte = (seek_pos as f64 * bytes_per_ms) as u64;
+        let clamped = target_byte.min(total.saturating_sub(1));
+        info!("[live] Seek: pos={}ms, cache_head={}ms, total_written={}B, bytes_per_ms={:.1}, target_byte={}, clamped={}",
+            seek_pos, cache_head_ms, total, bytes_per_ms, target_byte, clamped);
         drop(r);
         Box::new(crate::models::LiveByteReader::new(ring, clamped))
     } else {
@@ -1327,8 +1330,9 @@ pub fn play_live_internal(
     _pipe_total_bytes: Arc<AtomicU64>,
     cache_max_ms: u64,
     ring: std::sync::Arc<std::sync::Mutex<crate::models::LiveByteRing>>,
+    cache_head_ms: u64,
 ) {
-    android_logger::init_once(android_logger::Config::default().with_max_level(LogLevelFilter::Info));
+    android_logger::init_once(android_logger::Config::default().with_max_level(LevelFilter::Info));
     let _jvm = attach_current_thread_to_jvm();
 
     log::info!("[live] play_live_internal (Android): {}", url);
@@ -1338,15 +1342,12 @@ pub fn play_live_internal(
     let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
         let r = ring.lock().unwrap();
         let total = r.total_written();
-        let bytes_per_ms = if cache_max_ms > 0 {
-            (total as f64) / (cache_max_ms as f64)
-        } else {
-            128.0
-        };
-        let ms_ago = cache_max_ms.saturating_sub(seek_pos);
-        let byte_offset_from_live_edge = (ms_ago as f64 * bytes_per_ms) as u64;
-        let clamped = total.saturating_sub(byte_offset_from_live_edge);
-        log::info!("[live] Seek to {}ms ({}ms ago from live edge), byte offset ~{}, ring total_written={}", seek_pos, ms_ago, clamped, total);
+        let head_ms = cache_head_ms.max(1);
+        let bytes_per_ms = (total as f64) / (head_ms as f64);
+        let target_byte = (seek_pos as f64 * bytes_per_ms) as u64;
+        let clamped = target_byte.min(total.saturating_sub(1));
+        log::info!("[live] Seek: pos={}ms, cache_head={}ms, total_written={}B, bytes_per_ms={:.1}, target_byte={}, clamped={}",
+            seek_pos, cache_head_ms, total, bytes_per_ms, target_byte, clamped);
         drop(r);
         Box::new(crate::models::LiveByteReader::new(ring, clamped))
     } else {

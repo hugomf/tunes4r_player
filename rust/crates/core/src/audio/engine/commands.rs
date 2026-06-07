@@ -582,6 +582,7 @@ impl PlaybackEngine {
                 pipe_total_bytes,
                 cache_max_ms,
                 ring,
+                0, // cache_head_ms = 0 on initial play
             );
         });
 
@@ -978,6 +979,13 @@ impl PlaybackEngine {
                     let pipe_total_bytes = self.pipe_total_bytes.clone();
                     let seek_url = url.clone();
                     let ring = self.live_ring.clone().unwrap();
+                    let cache_head_ms = {
+                        let guard = self.live_start_time.lock().unwrap();
+                        guard.map(|start| {
+                            let elapsed = start.elapsed().as_millis() as u64;
+                            elapsed.min(cache_max_ms)
+                        }).unwrap_or(0)
+                    };
 
                     #[cfg(not(target_os = "android"))]
                     let handle = thread::spawn(move || {
@@ -988,6 +996,7 @@ impl PlaybackEngine {
                             load_error, seek_target_ms,
                             pipe_bytes_sent, pipe_total_bytes, cache_max_ms,
                             ring,
+                            cache_head_ms,
                         );
                     });
 
@@ -1000,6 +1009,7 @@ impl PlaybackEngine {
                             load_error, seek_target_ms,
                             pipe_bytes_sent, pipe_total_bytes, cache_max_ms,
                             ring,
+                            cache_head_ms,
                         );
                     });
                     self.playback_handle = Some(handle);
