@@ -11,7 +11,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::audio::stream::source::{Capability, SourceInfo, StreamSource};
+use crate::audio::stream::source::{Capability, ReadSeek, SourceInfo, StreamSource};
 
 pub struct CacheDecorator {
     inner: Box<dyn StreamSource>,
@@ -66,8 +66,8 @@ impl StreamSource for CacheDecorator {
 
     fn open(
         &self,
-        seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+        _seek_to: Option<u64>,
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         let mut state = self.state.lock().unwrap();
 
         match &*state {
@@ -87,8 +87,9 @@ impl StreamSource for CacheDecorator {
             CacheState::Uncached => {}
         }
 
-        // First open: read from inner, write to cache
-        let mut reader = self.inner.open(seek_to)?;
+        // First open: always cache from the beginning so the cache file is complete.
+        // Ignore seek_to — it would only produce a partial cache on first open.
+        let mut reader = self.inner.open(None)?;
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).map_err(|e| {
             *state = CacheState::Failed(format!("Read failed: {}", e));
@@ -141,6 +142,8 @@ mod tests {
                     stream_type: crate::models::StreamType::Seekable { total_bytes: data.len() as u64 },
                     uri: uri.to_string(),
                     title: None,
+                    artist: None,
+                    album: None,
                 },
                 data,
             }
@@ -160,7 +163,7 @@ mod tests {
         fn open(
             &self,
             _seek_to: Option<u64>,
-        ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+        ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
             Ok(Box::new(std::io::Cursor::new(self.data.clone())))
         }
     }

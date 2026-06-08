@@ -1,5 +1,6 @@
 //! Audio stream processing and decoding logic, primarily for non-Android platforms.
 
+use crate::audio::stream::source::ReadSeek;
 #[cfg(not(target_os = "android"))]
 use crate::dsp::RmsSpectrumAnalyzer;
 #[cfg(not(target_os = "android"))]
@@ -9,11 +10,12 @@ use log::{debug, error, info, warn};
 #[cfg(not(target_os = "android"))]
 use parking_lot::Mutex;
 #[cfg(not(target_os = "android"))]
-use std::io::Read;
-#[cfg(not(target_os = "android"))]
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(not(target_os = "android"))]
 use std::sync::Arc;
+#[cfg(not(target_os = "android"))]
+use std::collections::VecDeque;
 #[cfg(not(target_os = "android"))]
 use std::thread;
 #[cfg(not(target_os = "android"))]
@@ -35,6 +37,8 @@ use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 use symphonia::core::meta::MetadataOptions;
 #[cfg(not(target_os = "android"))]
 use symphonia::core::units::{TimeBase, Timestamp};
+#[cfg(not(target_os = "android"))]
+use crate::audio::decoder::seek::seek_to_position;
 
 /// A `Read` wrapper that counts bytes read and updates an `AtomicU64`.
 /// Used for Read-based sources (YouTube, progressive HTTP) to feed the
@@ -54,11 +58,18 @@ impl<R: Read> ByteCountingRead<R> {
 }
 
 #[cfg(not(target_os = "android"))]
-impl<R: Read> Read for ByteCountingRead<R> {
+impl<R: Read + Seek> Read for ByteCountingRead<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let n = self.inner.read(buf)?;
         self.counter.fetch_add(n as u64, Ordering::Relaxed);
         Ok(n)
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+impl<R: Read + Seek> Seek for ByteCountingRead<R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
     }
 }
 
@@ -108,7 +119,7 @@ struct DecodeCtx {
 
 #[cfg(not(target_os = "android"))]
 fn probe_format(
-    reader: Box<dyn Read + Send + Sync + 'static>,
+    reader: Box<dyn ReadSeek + Send + Sync + 'static>,
     ctx: &DecodeCtx,
 ) -> Option<(Box<dyn FormatReader>, u32, AudioCodecParameters, u32, usize, u64)> {
     info!("[stream] Connected! Detecting format...");
@@ -231,57 +242,6 @@ fn probe_format(
 }
 
 #[cfg(not(target_os = "android"))]
-fn prebuffer(
-    format: &mut Box<dyn FormatReader>,
-    decoder: &mut Box<dyn AudioDecoder>,
-    track_id: u32,
-    audio_queue: &AudioBuffer,
-    target_samples: usize,
-    output_sample_rate: u32,
-    _channels: usize,
-    should_stop: &AtomicBool,
-    _load_error: &Mutex<String>,
-) -> usize {
-    let mut buffered = 0;
-    while buffered < target_samples {
-        if should_stop.load(Ordering::Relaxed) {
-            break;
-        }
-        match format.next_packet() {
-            Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
-                Ok(audio_buf) => {
-                    let decoded_rate = audio_buf.spec().rate();
-                    let ch = audio_buf.spec().channels().count() as u16;
-                    let mut samples: Vec<f32> = Vec::new();
-                    audio_buf.copy_to_vec_interleaved(&mut samples);
-                    if decoded_rate != output_sample_rate {
-                        samples = resample_interleaved(
-                            &samples, decoded_rate, output_sample_rate, ch as usize,
-                        );
-                    }
-                    buffered += samples.len();
-                    audio_queue.lock().extend(samples);
-                }
-                Err(e) => {
-                    debug!("[stream] Prebuffer decode error: {}", e);
-                    thread::sleep(Duration::from_millis(10));
-                }
-            },
-            Ok(Some(_)) => continue,
-            Ok(None) => {
-                info!("[stream] Stream ended during buffering (buffered {} samples)", buffered);
-                break;
-            }
-            Err(e) => {
-                debug!("[stream] Prebuffer packet error: {}", e);
-                thread::sleep(Duration::from_millis(100));
-            }
-        }
-    }
-    buffered
-}
-
-#[cfg(not(target_os = "android"))]
 fn playback_loop(
     format: &mut Box<dyn FormatReader>,
     decoder: &mut Box<dyn AudioDecoder>,
@@ -289,15 +249,61 @@ fn playback_loop(
     audio_queue: &AudioBuffer,
     output_sample_rate: u32,
     channels: usize,
-    should_stop: &AtomicBool,
+    should_stop: &Arc<AtomicBool>,
     samples_played: &AtomicU64,
+    seek_request: &AtomicU64,
+    codec_params: &AudioCodecParameters,
 ) -> u64 {
+    let band_count = crate::audio::engine::get_band_count();
+    crate::audio::engine::types::update_global_spectrum(vec![0.1f32; band_count]);
+    let mut analyzer = RmsSpectrumAnalyzer::new(output_sample_rate, band_count);
+    let mut spectrum_accum: VecDeque<f32> = VecDeque::with_capacity(4096);
+    let mut last_spectrum_time = std::time::Instant::now();
+
     let mut decoded: u64 = 0;
     loop {
         if should_stop.load(Ordering::Relaxed) {
             debug!("[stream] Stop signal received, exiting loop");
             break;
         }
+
+        // Check for in-thread seek request from the engine.
+        // A non-zero value means the user has dragged the slider and we should
+        // reposition the format reader + decoder without re-opening the source.
+        let seek_target = seek_request.swap(0, Ordering::AcqRel);
+        if seek_target > 0 {
+            info!("[stream] In-thread seek to {} ms", seek_target);
+            audio_queue.lock().clear();
+            match seek_to_position(format, codec_params, track_id, seek_target, should_stop) {
+                Ok(outcome) => {
+                    info!(
+                        "[stream] In-thread seek complete: {:?}, residual {} samples",
+                        outcome.method, outcome.residual_samples_to_skip
+                    );
+                }
+                Err(e) => {
+                    warn!("[stream] In-thread seek failed: {}", e);
+                }
+            }
+            // Reset decoder — Symphonia 0.6 requires this after a seek
+            match make_decoder(codec_params) {
+                Ok(d) => *decoder = d,
+                Err(e) => {
+                    warn!("[stream] Failed to recreate decoder after seek: {}", e);
+                    break;
+                }
+            }
+            let ch_out = channels as u64;
+            let rate_out = output_sample_rate as u64;
+            let initial_samples = (seek_target * rate_out * ch_out) / 1000;
+            samples_played.store(initial_samples, Ordering::Relaxed);
+            info!(
+                "[stream] Re-seeded position: {} ms ({} samples at {} Hz, {} ch)",
+                seek_target, initial_samples, rate_out, ch_out
+            );
+            continue;
+        }
+
         match format.next_packet() {
             Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
                 Ok(audio_buf) => {
@@ -309,6 +315,29 @@ fn playback_loop(
                             &samples, decoded_rate, output_sample_rate, channels as usize,
                         );
                     }
+
+                    // Spectrum accumulation in the decode loop (matches play_file_internal pattern).
+                    for &s in &samples {
+                        spectrum_accum.push_back(s);
+                    }
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_spectrum_time).as_millis() >= 100 {
+                        let raw: Vec<f32> = spectrum_accum.drain(..).collect();
+                        if raw.len() >= channels {
+                            let total = raw.len() - (raw.len() % channels);
+                            let mono_frames = total / channels;
+                            let mut mono = Vec::with_capacity(mono_frames);
+                            for i in 0..mono_frames {
+                                let base = i * channels;
+                                let sum: f32 = raw[base..base + channels].iter().sum();
+                                mono.push(sum / channels as f32);
+                            }
+                            let normalized = analyzer.analyze(&mono);
+                            crate::audio::engine::types::update_global_spectrum(normalized);
+                        }
+                        last_spectrum_time = now;
+                    }
+
                     audio_queue.lock().extend(samples);
                     decoded += 1;
                     if decoded.is_multiple_of(100) {
@@ -376,8 +405,114 @@ fn drain_queue(
 }
 
 #[cfg(not(target_os = "android"))]
+fn build_and_play_stream(
+    config: &cpal::StreamConfig,
+    device: &cpal::Device,
+    audio_queue: &AudioBuffer,
+    buffer_ready: &Arc<AtomicBool>,
+    samples_played: &Arc<AtomicU64>,
+    _load_error: &Mutex<String>,
+) -> Result<cpal::Stream, String> {
+    let pq = audio_queue.clone();
+    let br = buffer_ready.clone();
+    let sp = samples_played.clone();
+    device
+        .build_output_stream(
+            config,
+            move |data: &mut [f32], _| {
+                if !br.load(Ordering::Relaxed) {
+                    for sample in data.iter_mut() {
+                        *sample = 0.0;
+                    }
+                    return;
+                }
+                let mut queue = pq.lock();
+                let mut count = 0;
+                for sample in data.iter_mut() {
+                    *sample = queue.pop_front().unwrap_or(0.0);
+                    count += 1;
+                }
+                if count > 0 {
+                    let vol = crate::audio::stream::cpal_source::get_volume_gain();
+                    let bal = crate::audio::stream::cpal_source::get_balance_gain().clamp(0.0, 1.0);
+                    let (left_gain, right_gain) = if bal <= 0.5 {
+                        (vol, vol * bal * 2.0)
+                    } else {
+                        (vol * (1.0 - bal) * 2.0, vol)
+                    };
+                    for frame in data.chunks_exact_mut(2) {
+                        frame[0] *= left_gain;
+                        frame[1] *= right_gain;
+                    }
+                    sp.fetch_add(count as u64, Ordering::Relaxed);
+                }
+            },
+            |err| error!("[stream] Audio output error: {}", err),
+            None,
+        )
+        .map_err(|e| format!("{}", e))
+}
+
+#[cfg(not(target_os = "android"))]
+fn get_output_stream(
+    config: &cpal::StreamConfig,
+    device: &cpal::Device,
+    audio_queue: &AudioBuffer,
+    buffer_ready: &Arc<AtomicBool>,
+    samples_played: &Arc<AtomicU64>,
+    load_error: &Mutex<String>,
+) -> Result<cpal::Stream, String> {
+    match build_and_play_stream(config, device, audio_queue, buffer_ready, samples_played, load_error) {
+        Ok(s) => {
+            info!("[stream] Output stream built with primary config");
+            Ok(s)
+        }
+        Err(e) => {
+            warn!(
+                "[stream] Failed to build stream with primary config ({} Hz, {} ch): {}. Retrying with device default...",
+                config.sample_rate, config.channels, e
+            );
+            match device.default_output_config() {
+                Ok(default_cfg) => {
+                    let fallback: cpal::StreamConfig = default_cfg.into();
+                    info!(
+                        "[stream] Retrying with fallback config: {:?} Hz, {} ch",
+                        fallback.sample_rate, fallback.channels
+                    );
+                    build_and_play_stream(&fallback, device, audio_queue, buffer_ready, samples_played, load_error)
+                }
+                Err(e2) => {
+                    Err(format!(
+                        "Failed to build audio stream ({}) and no default config available: {}",
+                        e, e2
+                    ))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn make_decoder(
+    codec_params: &AudioCodecParameters,
+) -> Result<Box<dyn AudioDecoder>, String> {
+    let mut registry = symphonia::core::codecs::registry::CodecRegistry::new();
+    registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();
+    registry.register_audio_decoder::<symphonia_codec_aac::AacDecoder>();
+    registry.register_audio_decoder::<symphonia_codec_vorbis::VorbisDecoder>();
+    registry.register_audio_decoder::<symphonia_bundle_flac::FlacDecoder>();
+    registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
+    registry
+        .make_audio_decoder(
+            codec_params,
+            &symphonia::core::codecs::audio::AudioDecoderOptions::default(),
+        )
+        .map_err(|e| format!("{}", e))
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn decode_and_play_from_read(
-    reader: Box<dyn Read + Send + Sync + 'static>,
+    reader: Box<dyn ReadSeek + Send + Sync + 'static>,
     audio_queue: AudioBuffer,
     buffer_ready: Arc<AtomicBool>,
     is_playing_flag: Arc<AtomicBool>,
@@ -388,9 +523,8 @@ pub fn decode_and_play_from_read(
     total_duration_ms: Arc<AtomicU64>,
     load_error: Arc<Mutex<String>>,
     seek_target_ms: Arc<AtomicU64>,
+    seek_request: Arc<AtomicU64>,
 ) {
-    use crate::audio::engine::types::get_band_count;
-
     let ctx = DecodeCtx {
         sample_rate_out: sample_rate_out.clone(),
         channels_out: channels_out.clone(),
@@ -449,9 +583,31 @@ pub fn decode_and_play_from_read(
     let target_buffer_samples =
         (output_sample_rate as f32 * 7.0) as usize * channels as usize;
 
-    // Seed samples_played after a seek so get_position() reflects
-    // the actual playback position rather than starting from 0.
+    // ── Phase 3: Seek (if requested) ──
+    let mut samples_to_skip: u64 = 0;
+
     if seek_pos_ms > 0 {
+        info!("[stream] Seeking to {} ms via seek_to_position", seek_pos_ms);
+        let seek_result = seek_to_position(
+            &mut format,
+            &codec_params,
+            track_id,
+            seek_pos_ms,
+            &should_stop,
+        );
+        match &seek_result {
+            Ok(outcome) => {
+                info!(
+                    "[stream] Seek complete: {:?}, residual {} samples",
+                    outcome.method, outcome.residual_samples_to_skip
+                );
+                samples_to_skip = outcome.residual_samples_to_skip;
+            }
+            Err(e) => {
+                warn!("[stream] Seek failed: {}", e);
+            }
+        }
+
         let ch_out = config.channels as u64;
         let rate_out = output_sample_rate as u64;
         let initial_samples = (seek_pos_ms * rate_out * ch_out) / 1000;
@@ -462,18 +618,9 @@ pub fn decode_and_play_from_read(
         );
     }
 
-    // ── Phase 3: Create decoder ──
-    let mut registry = symphonia::core::codecs::registry::CodecRegistry::new();
-    registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();
-    registry.register_audio_decoder::<symphonia_codec_aac::AacDecoder>();
-    registry.register_audio_decoder::<symphonia_codec_vorbis::VorbisDecoder>();
-    registry.register_audio_decoder::<symphonia_bundle_flac::FlacDecoder>();
-    registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
-    let mut decoder = match registry.make_audio_decoder(
-        &codec_params,
-        &symphonia::core::codecs::audio::AudioDecoderOptions::default(),
-    ) {
-        Ok(decoder) => decoder,
+    // ── Phase 4: Create decoder ──
+    let mut decoder = match make_decoder(&codec_params) {
+        Ok(d) => d,
         Err(e) => {
             let err_msg = format!("Decoder creation failed: {}", e);
             debug!("[stream] {}", err_msg);
@@ -482,100 +629,74 @@ pub fn decode_and_play_from_read(
         }
     };
 
-    // ── Phase 4: Prebuffer ──
+    // ── Phase 5: Prebuffer (with residual skip after packet-skip seek) ──
     debug!("[stream] Pre-buffering {} samples (7 seconds)...", target_buffer_samples);
-    let _buffered = prebuffer(
-        &mut format,
-        &mut decoder,
-        track_id,
-        &audio_queue,
-        target_buffer_samples,
-        output_sample_rate,
-        channels,
-        &should_stop,
-        &load_error,
-    );
-    info!("[stream] Pre-buffer complete: {} samples", _buffered);
+    let mut buffered = 0;
+    while buffered < target_buffer_samples {
+        if should_stop.load(Ordering::Relaxed) {
+            break;
+        }
+        match format.next_packet() {
+            Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
+                Ok(audio_buf) => {
+                    let decoded_rate = audio_buf.spec().rate();
+                    let ch = audio_buf.spec().channels().count() as u16;
+                    let mut samples: Vec<f32> = Vec::new();
+                    audio_buf.copy_to_vec_interleaved(&mut samples);
+                    if decoded_rate != output_sample_rate {
+                        samples = resample_interleaved(
+                            &samples, decoded_rate, output_sample_rate, ch as usize,
+                        );
+                    }
 
-    // ── Phase 5: Build & play output stream ──
-    let spectrum_sample_buffer: Arc<Mutex<Vec<f32>>> =
-        Arc::new(Mutex::new(Vec::with_capacity(4096)));
+                    if samples_to_skip > 0 {
+                        let n = samples.len() as u64;
+                        if samples_to_skip >= n {
+                            samples_to_skip -= n;
+                            continue;
+                        }
+                        samples.drain(0..samples_to_skip as usize);
+                        samples_to_skip = 0;
+                    }
 
+                    buffered += samples.len();
+                    audio_queue.lock().extend(samples);
+                }
+                Err(e) => {
+                    debug!("[stream] Prebuffer decode error: {}", e);
+                    thread::sleep(Duration::from_millis(10));
+                }
+            },
+            Ok(Some(_)) => continue,
+            Ok(None) => {
+                info!("[stream] Stream ended during buffering (buffered {} samples)", buffered);
+                break;
+            }
+            Err(e) => {
+                debug!("[stream] Prebuffer packet error: {}", e);
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+    info!("[stream] Pre-buffer complete: {} samples", buffered);
+
+    // ── Phase 6: Build & play output stream ──
     info!("[stream] Building output stream...");
 
-    let build_stream = |cfg: &cpal::StreamConfig| -> Result<cpal::Stream, String> {
-        let pq = audio_queue.clone();
-        let br = buffer_ready.clone();
-        let sp = samples_played.clone();
-        device
-            .build_output_stream(
-                cfg,
-                move |data: &mut [f32], _| {
-                    if !br.load(Ordering::Relaxed) {
-                        for sample in data.iter_mut() {
-                            *sample = 0.0;
-                        }
-                        return;
-                    }
-                    let mut queue = pq.lock();
-                    let mut count = 0;
-                    for sample in data.iter_mut() {
-                        *sample = queue.pop_front().unwrap_or(0.0);
-                        count += 1;
-                    }
-                    if count > 0 {
-                        sp.fetch_add(count as u64, Ordering::Relaxed);
-                    }
-                },
-                |err| error!("[stream] Audio output error: {}", err),
-                None,
-            )
-            .map_err(|e| format!("{}", e))
-    };
-
-    let stream = match build_stream(&config) {
-        Ok(s) => {
-            info!("[stream] Output stream built with primary config");
-            s
-        }
+    let stream = match get_output_stream(
+        &config,
+        &device,
+        &audio_queue,
+        &buffer_ready,
+        &samples_played,
+        &load_error,
+    ) {
+        Ok(s) => s,
         Err(e) => {
-            warn!(
-                "[stream] Failed to build stream with primary config ({} Hz, {} ch): {}. Retrying with device default...",
-                config.sample_rate, config.channels, e
-            );
-            match device.default_output_config() {
-                Ok(default_cfg) => {
-                    let fallback: cpal::StreamConfig = default_cfg.into();
-                    info!(
-                        "[stream] Retrying with fallback config: {:?} Hz, {} ch",
-                        fallback.sample_rate, fallback.channels
-                    );
-                    match build_stream(&fallback) {
-                        Ok(s) => {
-                            info!("[stream] Output stream built with fallback config");
-                            s
-                        }
-                        Err(e2) => {
-                            let err_msg = format!(
-                                "Failed to build audio stream with both configs: primary={}, fallback={}",
-                                e, e2
-                            );
-                            error!("[stream] {}", err_msg);
-                            *load_error.lock() = err_msg;
-                            return;
-                        }
-                    }
-                }
-                Err(e2) => {
-                    let err_msg = format!(
-                        "Failed to build audio stream ({}) and no default config available: {}",
-                        e, e2
-                    );
-                    error!("[stream] {}", err_msg);
-                    *load_error.lock() = err_msg;
-                    return;
-                }
-            }
+            let err_msg = format!("Failed to build audio stream: {}", e);
+            error!("[stream] {}", err_msg);
+            *load_error.lock() = err_msg;
+            return;
         }
     };
 
@@ -597,43 +718,6 @@ pub fn decode_and_play_from_read(
         }
     }
 
-    // ── Phase 6: Spectrum analysis thread ──
-    let band_count = get_band_count();
-    crate::audio::engine::types::update_global_spectrum(vec![0.1f32; band_count]);
-
-    let spectrum_stop = should_stop.clone();
-    let spectrum_reader = spectrum_sample_buffer.clone();
-    let spectrum_channels = channels;
-
-    thread::Builder::new()
-        .name("stream-spectrum".to_string())
-        .spawn(move || {
-            let mut analyzer = RmsSpectrumAnalyzer::new(output_sample_rate, band_count);
-            loop {
-                if spectrum_stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(100));
-                let raw = {
-                    let buf = spectrum_reader.lock();
-                    buf.clone()
-                };
-                if raw.len() >= spectrum_channels {
-                    let total = raw.len() - (raw.len() % spectrum_channels);
-                    let mono_frames = total / spectrum_channels;
-                    let mut mono = Vec::with_capacity(mono_frames);
-                    for i in 0..mono_frames {
-                        let base = i * spectrum_channels;
-                        let sum: f32 = raw[base..base + spectrum_channels].iter().sum();
-                        mono.push(sum / spectrum_channels as f32);
-                    }
-                    let normalized = analyzer.analyze(&mono);
-                    crate::audio::engine::types::update_global_spectrum(normalized);
-                }
-            }
-        })
-        .unwrap();
-
     // ── Phase 7: Playback loop ──
     let decode_count = playback_loop(
         &mut format,
@@ -644,6 +728,8 @@ pub fn decode_and_play_from_read(
         channels,
         &should_stop,
         &samples_played,
+        &*seek_request,
+        &codec_params,
     );
 
     // ── Phase 8: Drain ──
@@ -690,6 +776,7 @@ pub fn play_stream_from_pipe_internal(
         total_duration_ms,
         load_error,
         Arc::new(AtomicU64::new(0)),
+        Arc::new(AtomicU64::new(0)),
     );
 }
 
@@ -723,7 +810,7 @@ pub fn play_live_internal(
     let seek_pos = seek_target_ms.load(Ordering::Relaxed);
 
     // Determine if we should read from cached ring (seek) or download fresh.
-    let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
+    let reader: Box<dyn ReadSeek + Send + Sync + 'static> = if seek_pos > 0 {
         // Seek: map seek_pos (absolute ms from start) to an absolute byte
         // offset in the ring buffer stream.
         // cache_head_ms is the actual elapsed wall-clock time (capped at
@@ -782,9 +869,14 @@ pub fn play_live_internal(
         total_duration_ms,
         load_error,
         seek_target_ms,
+        Arc::new(AtomicU64::new(0)),
     );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════
+// Android-specific implementations (share the same module paths as
+// desktop, so callers in commands.rs use a single module namespace).
 // ═══════════════════════════════════════════════════════════════════════
 // Android-specific implementations (share the same module paths as
 // desktop, so callers in commands.rs use a single module namespace).
@@ -901,7 +993,7 @@ fn probe_audio_duration(bytes: &[u8], _len: usize, _sample_rate: u64) -> Option<
 
 #[cfg(target_os = "android")]
 pub fn decode_and_play_from_read(
-    reader: Box<dyn Read + Send + Sync + 'static>,
+    reader: Box<dyn ReadSeek + Send + Sync + 'static>,
     audio_queue: AudioBuffer,
     buffer_ready: Arc<AtomicBool>,
     is_playing_flag: Arc<AtomicBool>,
@@ -1157,15 +1249,8 @@ pub fn decode_and_play_from_read(
                 break;
             }
             Err(e) => {
-                log::error!("[stream] Packet error: {}", e);
-                prebuffer_error_count += 1;
-                if prebuffer_error_count >= MAX_PACKET_ERRORS {
-                    let err_msg = format!("Too many packet errors ({}): {}", prebuffer_error_count, e);
-                    log::error!("[stream] {}", err_msg);
-                    *load_error.lock() = err_msg;
-                    return;
-                }
-                thread::sleep(Duration::from_millis(100));
+                log::warn!("[stream] Packet format error during pre-buffer: {}", e);
+                thread::sleep(Duration::from_millis(10));
             }
         }
 
@@ -1280,15 +1365,8 @@ pub fn decode_and_play_from_read(
                 break;
             }
             Err(e) => {
-                packet_error_count += 1;
-                log::error!("[stream] Packet error ({}): {}", packet_error_count, e);
-                if packet_error_count >= MAX_PACKET_ERRORS {
-                    let err_msg = format!("Too many packet errors ({}): {}", packet_error_count, e);
-                    log::error!("[stream] {}", err_msg);
-                    *load_error.lock() = err_msg;
-                    break;
-                }
-                thread::sleep(Duration::from_millis(100));
+                log::warn!("[stream] Packet format error ({}): {}", decode_count + 1, e);
+                thread::sleep(Duration::from_millis(10));
             }
         }
     }
@@ -1339,7 +1417,7 @@ pub fn play_live_internal(
 
     let seek_pos = seek_target_ms.load(Ordering::Relaxed);
 
-    let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
+    let reader: Box<dyn ReadSeek + Send + Sync + 'static> = if seek_pos > 0 {
         let r = ring.lock().unwrap();
         let total = r.total_written();
         let head_ms = cache_head_ms.max(1);
@@ -1400,7 +1478,7 @@ pub fn play_live_internal(
             });
         });
 
-        Box::new(pipe_reader) as Box<dyn Read + Send + Sync + 'static>
+        Box::new(pipe_reader) as Box<dyn ReadSeek + Send + Sync + 'static>
     };
 
     total_duration_ms.store(cache_max_ms, Ordering::Relaxed);

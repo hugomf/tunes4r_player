@@ -6,8 +6,7 @@ use crate::audio::engine::types::HttpClient;
 use crate::audio::error::PlaybackError;
 use crate::models::StreamType;
 
-use super::{Capability, SourceInfo, SourceKind, StreamSource};
-use std::io::Read;
+use super::{Capability, NonSeekable, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use std::sync::Arc;
 
 pub struct RadioSource {
@@ -25,6 +24,8 @@ impl RadioSource {
                 },
                 uri: url.to_string(),
                 title: None,
+                artist: None,
+                album: None,
             },
             client,
         }
@@ -45,7 +46,7 @@ impl StreamSource for RadioSource {
     fn open(
         &self,
         _seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         #[cfg(not(target_os = "android"))]
         {
             let resp = self
@@ -69,7 +70,7 @@ impl StreamSource for RadioSource {
                 });
             }
 
-            Ok(Box::new(resp))
+            Ok(Box::new(NonSeekable(resp)))
         }
 
         #[cfg(target_os = "android")]

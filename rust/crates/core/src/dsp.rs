@@ -338,6 +338,12 @@ impl Equalizer {
 
     pub fn process(&self, samples: &mut [f32]) {
         // Placeholder — a full implementation would use per-band biquad filters
+        // Log once so callers know the equalizer is not yet wired.
+        use std::sync::Once;
+        static WARNED: Once = Once::new();
+        WARNED.call_once(|| {
+            log::warn!("Equalizer::process is a no-op; biquad filters not yet implemented");
+        });
         let _ = (samples, self.sample_rate);
     }
 }

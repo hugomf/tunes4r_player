@@ -37,9 +37,6 @@ num-traits = "0.2"
 url = "2.5.8"
 id3 = "1.17.0"
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
-reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "rustls-tls-native-roots"] }
-
 [dependencies.rustls-platform-verifier]
 version = "0.6.2"
 optional = true

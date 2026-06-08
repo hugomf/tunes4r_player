@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -325,7 +325,7 @@ impl LiveByteRing {
         let start = if abs_offset >= self.total_written {
             return 0; // past the write head
         } else if self.total_written - abs_offset > ring_len {
-            0 // data was evicted
+            return 0; // data was evicted
         } else {
             (ring_len - (self.total_written - abs_offset)) as usize
         };
@@ -386,6 +386,39 @@ impl Read for LiveByteReader {
     }
 }
 
+impl Seek for LiveByteReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        match pos {
+            SeekFrom::Start(offset) => {
+                self.read_offset = offset;
+                self.exhausted = false;
+                Ok(offset)
+            }
+            SeekFrom::Current(delta) => {
+                let new_pos = self.read_offset as i64 + delta;
+                if new_pos < 0 {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "seek before beginning",
+                    ))
+                } else {
+                    let new_pos = new_pos as u64;
+                    self.read_offset = new_pos;
+                    self.exhausted = false;
+                    Ok(new_pos)
+                }
+            }
+            SeekFrom::End(_) => {
+                // Ring buffer is live — end position is not fixed.
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "SeekFrom::End not supported on live stream",
+                ))
+            }
+        }
+    }
+}
+
 /// A Read wrapper that caches all bytes read into a LiveByteRing.
 /// Used by `play_live_internal` to simultaneously feed the decoder
 /// and fill the ring buffer for backward seek.
@@ -408,6 +441,15 @@ impl<R: Read> Read for LiveByteCacheReader<R> {
             ring.push(&buf[..n]);
         }
         Ok(n)
+    }
+}
+
+impl<R: Read> Seek for LiveByteCacheReader<R> {
+    fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "live cache reader is not seekable",
+        ))
     }
 }
 
@@ -665,5 +707,160 @@ mod tests {
         };
         assert_eq!(buf.end_ms_clamped(), buf.end_ms());
         assert_eq!(buf.end_ms_clamped(), 20_000);
+    }
+
+    // ── LiveByteRing + LiveByteReader: seek-in-ring tests ──
+    // These verify that seeking within the ring buffer returns the
+    // correct data without re-fetching from the network.
+
+    #[test]
+    fn ring_read_at_returns_written_data() {
+        let mut ring = LiveByteRing::new(30_000, 128_000);
+        ring.push(b"Hello, LiveByteRing!");
+        let mut out = [0u8; 20];
+        let n = ring.read_at(0, &mut out);
+        assert_eq!(n, 20, "should read 20 bytes, got {}", n);
+        assert_eq!(&out[..n], b"Hello, LiveByteRing!");
+    }
+
+    #[test]
+    fn ring_read_at_offset_skips_bytes() {
+        let mut ring = LiveByteRing::new(30_000, 128_000);
+        ring.push(b"abcdefghijklmnopqrstuvwxyz");
+        let mut out = [0u8; 10];
+        let n = ring.read_at(5, &mut out);
+        assert_eq!(n, 10, "should read 10 bytes at offset 5, got {}", n);
+        assert_eq!(&out[..n], b"fghijklmno");
+    }
+
+    #[test]
+    fn ring_read_at_past_total_returns_zero() {
+        let mut ring = LiveByteRing::new(30_000, 128_000);
+        ring.push(b"small data");
+        let mut out = [0u8; 10];
+        let n = ring.read_at(100, &mut out);
+        assert_eq!(n, 0, "past total should return 0");
+    }
+
+    #[test]
+    fn ring_read_at_evicted_data_returns_zero() {
+        let mut ring = LiveByteRing::new(1, 128_000); // ring holds ~16KB
+        // Fill with 32KB — older data gets evicted.
+        for i in 0..32_000u16 {
+            ring.push(&[(i % 256) as u8]);
+        }
+        // Ring holds only the last ~16KB. Offset 0 is well past eviction.
+        let mut out = [0u8; 1];
+        let n = ring.read_at(0, &mut out);
+        assert_eq!(n, 0, "evicted data should return 0");
+    }
+
+    #[test]
+    fn ring_wraparound_read_at_earliest_cached_byte() {
+        let mut ring = LiveByteRing::new(1, 128_000); // ring holds ~16KB
+        // Write 32KB; ring holds only the last ~16KB.
+        for i in 0..32_000u16 {
+            ring.push(&[(i % 256) as u8]);
+        }
+        // Ring holds bytes [16000..32000). Earliest readable offset is ~16000.
+        // total_written = 32000, ring_len = 16000, oldest = 16000.
+        let mut out = [0u8; 1];
+        let n = ring.read_at(16_000, &mut out);
+        assert_eq!(n, 1, "earliest cached byte should be readable");
+        assert_eq!(out[0], (16_000 % 256) as u8, "byte should be 0x40 (64)");
+    }
+
+    #[test]
+    fn live_byte_reader_reads_sequentially_after_seek() {
+        // Fill ring with known data.
+        let ring = Arc::new(Mutex::new(LiveByteRing::new(30_000, 128_000)));
+        {
+            let mut r = ring.lock().unwrap();
+            let data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+            r.push(&data);
+        }
+
+        // Seek to offset 500 and verify we read from there.
+        let mut reader = LiveByteReader::new(ring, 500);
+        let mut buf = [0u8; 10];
+        let n = reader.read(&mut buf).expect("read should succeed");
+        assert_eq!(n, 10, "should read 10 bytes, got {}", n);
+        // Data is (0..1000).map(|i| (i % 256) as u8),
+        // so offset 500 → byte 244, then 245, 246...
+        let expected: Vec<u8> = (500u16..510).map(|i| (i % 256) as u8).collect();
+        assert_eq!(buf.to_vec(), expected,
+            "read_at(500, 10) should match source at offset 500");
+    }
+
+    #[test]
+    fn live_byte_reader_reads_past_ring_exhaustion() {
+        // Reader should return Ok(0) when ring is empty.
+        let ring = Arc::new(Mutex::new(LiveByteRing::new(30_000, 128_000)));
+        let mut reader = LiveByteReader::new(ring, 0);
+        let mut buf = [0u8; 10];
+        let n = reader.read(&mut buf).expect("read on empty ring");
+        // First read sleeps 100ms and retries; if still empty, returns 0.
+        assert_eq!(n, 0, "empty ring should return 0 after retry");
+    }
+
+    #[test]
+    fn live_byte_reader_sequential_reads_advance_position() {
+        let ring = Arc::new(Mutex::new(LiveByteRing::new(30_000, 128_000)));
+        {
+            let mut r = ring.lock().unwrap();
+            r.push(b"0123456789ABCDEF");
+        }
+
+        let mut reader = LiveByteReader::new(ring, 5);
+        let mut buf = [0u8; 5];
+        reader.read(&mut buf).expect("first read");
+        assert_eq!(&buf, b"56789");
+
+        // Second read should pick up where left off.
+        let mut buf2 = [0u8; 5];
+        reader.read(&mut buf2).expect("second read");
+        assert_eq!(&buf2, b"ABCDE");
+    }
+
+    #[test]
+    fn live_byte_seek_and_read_after_cache_reader_writes() {
+        // Simulate real live-stream flow:
+        // 1. HTTP data comes through LiveByteCacheReader into ring.
+        // 2. Seek creates LiveByteReader at offset.
+        // 3. Verify seek reads correct data from ring.
+        let ring = Arc::new(Mutex::new(LiveByteRing::new(5, 128_000))); // tiny ring
+
+        // Step 1: Write data via a cursor (simulates HTTP download).
+        // Only need enough data to exceed ring capacity.
+        let source_data: Vec<u8> = (0..200_000).map(|i| (i % 256) as u8).collect();
+        let cursor = std::io::Cursor::new(source_data.clone());
+        let mut cache_reader = LiveByteCacheReader::new(cursor, ring.clone());
+        let mut tmp = [0u8; 8192];
+        while cache_reader.read(&mut tmp).expect("cache read") > 0 {}
+
+        // Verify ring has data.
+        assert!(
+            ring.lock().unwrap().len() > 0,
+            "ring should have data after cache reader finishes"
+        );
+
+        // Step 2: Seek to a position near the end of cached data.
+        // The ring holds only the last ~80KB of the 200KB source.
+        // Seek to offset 150KB (within the cached window for a 5s ring).
+        let seek_byte = 150_000u64;
+        let mut reader = LiveByteReader::new(ring.clone(), seek_byte);
+
+        // Step 3: Read bytes from seek position and verify.
+        let mut read_buf = [0u8; 100];
+        let n = reader.read(&mut read_buf).expect("seek read");
+        assert!(n > 0, "should read data after seek, got {} bytes", n);
+
+        // Verify the data matches the source at the same offset.
+        for i in 0..n {
+            assert_eq!(
+                read_buf[i], source_data[seek_byte as usize + i],
+                "byte mismatch at offset {} (seek {})", i, seek_byte
+            );
+        }
     }
 }

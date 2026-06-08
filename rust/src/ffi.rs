@@ -4,49 +4,20 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use log::{error, info};
+use tracing::{error, info};
+#[cfg(target_os = "android")]
+use tracing::warn;
 
 use tunes4r_core::audio::engine::types::GLOBAL_SPECTRUM;
 use tunes4r_core::audio::{PlaybackEngine, PlaybackError};
-use tunes4r_core::dsp::SpectrumAnalyzer;
 use tunes4r_core::models::{
-    DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState, SpectrumData,
+    DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::{Arc, RwLock};
-
-// Simple stderr logger for non-Android platforms.
-#[cfg(not(target_os = "android"))]
-struct StderrLogger;
-
-#[cfg(not(target_os = "android"))]
-impl log::Log for StderrLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        // Capture Debug, Info, Warn, and Error so error paths that use
-        // `debug!` (e.g. stream-format failures) still surface in the
-        // Flutter log output. Without this, errors stored in
-        // `load_error` and shown in the UI would be invisible in logs.
-        metadata.level() <= log::Level::Debug
-    }
-
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            // Prefix with level so logs are easy to grep.
-            let level = record.level();
-            let msg = format!("[{}] {}", level, record.args());
-            eprintln!("{}", msg);
-            // Also push to a ring buffer that the Dart UI can read via
-            // FFI, so log messages are visible even when stderr is
-            // not captured (e.g. GUI apps on macOS, release builds).
-            LOG_BUFFER.push(&msg);
-        }
-    }
-
-    fn flush(&self) {}
-}
 
 /// Ring buffer of the most recent log messages, exposed to the Dart
 /// side via FFI. Useful for debugging when stderr is not captured
@@ -89,10 +60,39 @@ static LOG_BUFFER: LogRingBuffer = LogRingBuffer::new();
 
 #[cfg(not(target_os = "android"))]
 fn init_logger() {
-    use log::LevelFilter;
-    static LOGGER: StderrLogger = StderrLogger;
-    log::set_logger(&LOGGER).ok();
-    log::set_max_level(LevelFilter::Debug);
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        // Bridge log → tracing so core crate's log::info!() calls flow through
+        // our tracing subscriber (and into LOG_BUFFER for the Dart UI).
+        tracing_log::LogTracer::init().ok();
+
+        use std::io::Write;
+
+        struct StderrBufferWriter;
+
+        impl Write for StderrBufferWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let n = std::io::stderr().write(buf)?;
+                if n > 0 {
+                    let line = std::str::from_utf8(&buf[..n]).unwrap_or("");
+                    let trimmed = line.trim_end_matches('\n');
+                    if !trimmed.is_empty() {
+                        LOG_BUFFER.push(trimmed);
+                    }
+                }
+                Ok(n)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                std::io::stderr().flush()
+            }
+        }
+
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(|| StderrBufferWriter)
+            .with_target(true)
+            .try_init();
+    });
 }
 
 // ============================================================================
@@ -154,14 +154,15 @@ pub extern "C" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std::ffi
     unsafe {
         ndk_context::initialize_android_context(vm, std::ptr::null_mut());
     }
-    // Initialize Android logger so all log::info! / log::error! calls appear in logcat
+    // Initialize Android logger so all tracing::info! / tracing::error! calls appear in logcat
+    // (tracing's "log" feature forwards events to the log crate, which android_logger picks up).
     #[cfg(target_os = "android")]
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("tunes4r"),
     );
-    log::info!("[ffi] JNI_OnLoad: ndk_context initialized");
+    info!("[ffi] JNI_OnLoad: ndk_context initialized");
     jni::sys::JNI_VERSION_1_6
 }
 
@@ -181,14 +182,14 @@ pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPl
     let env_wrapper = match jni::JNIEnv::from_raw(env) {
         Ok(e) => e,
         Err(e) => {
-            log::warn!("[ffi] nativeInit: JNIEnv::from_raw failed: {:?}", e);
+            warn!("[ffi] nativeInit: JNIEnv::from_raw failed: {:?}", e);
             return;
         }
     };
     let vm = match env_wrapper.get_java_vm() {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("[ffi] nativeInit: get_java_vm failed: {:?}", e);
+            warn!("[ffi] nativeInit: get_java_vm failed: {:?}", e);
             return;
         }
     };
@@ -203,21 +204,19 @@ pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPl
                 .with_max_level(log::LevelFilter::Debug)
                 .with_tag("tunes4r"),
         );
-        log::info!("[ffi] ndk_context initialized via nativeInit");
+        info!("[ffi] ndk_context initialized via nativeInit");
     }
 }
 
 /// Opaque handle to the audio engine
 pub struct AudioEngineHandle {
     playback: Arc<RwLock<PlaybackEngine>>,
-    spectrum: RwLock<SpectrumAnalyzer>,
 }
 
 impl AudioEngineHandle {
     fn new() -> Result<Self, PlaybackError> {
         Ok(Self {
             playback: Arc::new(RwLock::new(PlaybackEngine::new_without_device()?)),
-            spectrum: RwLock::new(SpectrumAnalyzer::default()),
         })
     }
 
@@ -687,27 +686,6 @@ pub extern "C" fn audio_engine_get_pipe_seek_byte_offset(handle: *mut AudioEngin
     result.unwrap_or(-1)
 }
 
-/// Get the pipe URL for re-fetching
-/// Returns null if not in pipe mode or no pending seek
-#[no_mangle]
-pub extern "C" fn audio_engine_get_pipe_url_for_seek(
-    handle: *mut AudioEngineHandle,
-) -> *mut c_char {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        let engine = unsafe { &*handle }.playback.read().unwrap();
-        match engine.get_pipe_seek_info() {
-            Some((url, _offset_ms, _byte_offset)) => CString::new(url).unwrap().into_raw(),
-            None => std::ptr::null_mut(),
-        }
-    }));
-
-    result.unwrap_or(std::ptr::null_mut())
-}
-
 /// Poll for a seek request from the Symphonia decoder via the pipe.
 /// This is for internal probing seeks, not user-initiated seeks.
 /// Returns the byte offset of the seek if one is pending and significant (> 10 bytes),
@@ -767,49 +745,7 @@ pub extern "C" fn audio_engine_clear_pipe_seek_request(handle: *mut AudioEngineH
     }
 }
 
-/// Skip forward by milliseconds
-#[no_mangle]
-pub extern "C" fn audio_engine_skip_forward(handle: *mut AudioEngineHandle, ms: u64) -> i32 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return -1;
-        }
 
-        match unsafe { &mut *handle }
-            .playback
-            .write()
-            .unwrap()
-            .skip_forward(ms)
-        {
-            Ok(()) => 0,
-            Err(_) => -2,
-        }
-    }));
-
-    result.unwrap_or(-99)
-}
-
-/// Skip backward by milliseconds
-#[no_mangle]
-pub extern "C" fn audio_engine_skip_backward(handle: *mut AudioEngineHandle, ms: u64) -> i32 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return -1;
-        }
-
-        match unsafe { &mut *handle }
-            .playback
-            .write()
-            .unwrap()
-            .skip_backward(ms)
-        {
-            Ok(()) => 0,
-            Err(_) => -2,
-        }
-    }));
-
-    result.unwrap_or(-99)
-}
 
 // ============================================================================
 // Volume control
@@ -843,6 +779,36 @@ pub extern "C" fn audio_engine_get_volume(handle: *const AudioEngineHandle) -> f
         }
     }));
     result.unwrap_or(1.0)
+}
+
+/// Set balance (0.0 = full left, 0.5 = center, 1.0 = full right)
+#[no_mangle]
+pub extern "C" fn audio_engine_set_balance(handle: *const AudioEngineHandle, balance: f32) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if !handle.is_null() {
+            unsafe { &*handle }
+                .playback
+                .read()
+                .unwrap()
+                .set_balance(balance);
+        }
+    }));
+    if result.is_err() {
+        error!("[ffi] PANIC in audio_engine_set_balance");
+    }
+}
+
+/// Get current balance
+#[no_mangle]
+pub extern "C" fn audio_engine_get_balance(handle: *const AudioEngineHandle) -> f32 {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if handle.is_null() {
+            0.5
+        } else {
+            unsafe { &*handle }.playback.read().unwrap().get_balance()
+        }
+    }));
+    result.unwrap_or(0.5)
 }
 
 // ============================================================================
@@ -1000,40 +966,6 @@ pub extern "C" fn audio_engine_is_playing(handle: *const AudioEngineHandle) -> b
 // Spectrum analysis
 // ============================================================================
 
-/// Analyze audio samples and return spectrum data
-///
-/// The returned SpectrumData must be freed with `spectrum_data_free`.
-#[allow(improper_ctypes_definitions)]
-#[no_mangle]
-pub extern "C" fn audio_engine_analyze_spectrum(
-    handle: *mut AudioEngineHandle,
-    samples: *const f32,
-    sample_count: usize,
-) -> SpectrumData {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || samples.is_null() || sample_count == 0 {
-            return SpectrumData::default();
-        }
-
-        let handle = unsafe { &*handle };
-        let samples = unsafe { std::slice::from_raw_parts(samples, sample_count) };
-
-        handle.spectrum.write().unwrap().analyze(samples)
-    }));
-
-    result.unwrap_or_default()
-}
-
-/// Free spectrum data returned from analysis
-#[no_mangle]
-pub extern "C" fn spectrum_data_free(data: *mut SpectrumData) {
-    if !data.is_null() {
-        unsafe {
-            drop(Box::from_raw(data));
-        }
-    }
-}
-
 /// Get real-time spectrum data from the playback engine
 ///
 /// Copies up to 32 frequency bands into the provided output buffer.
@@ -1110,31 +1042,6 @@ pub extern "C" fn audio_engine_get_load_error(handle: *const AudioEngineHandle) 
     }
 }
 
-/// Get last error from the engine (alias for load_error for clarity)
-#[no_mangle]
-pub extern "C" fn audio_engine_get_last_error(handle: *const AudioEngineHandle) -> *mut c_char {
-    audio_engine_get_load_error(handle)
-}
-
-/// Get buffered bytes during Buffering state
-/// Returns 0 if not currently buffering
-#[no_mangle]
-pub extern "C" fn audio_engine_get_buffered_bytes(handle: *const AudioEngineHandle) -> u64 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return 0;
-        }
-
-        let state = unsafe { &*handle }.playback.write().unwrap().get_state();
-        match state {
-            PlaybackState::Buffering { buffered_bytes, .. } => buffered_bytes,
-            _ => 0,
-        }
-    }));
-
-    result.unwrap_or(0)
-}
-
 /// Get buffered position in milliseconds
 /// This is the current playback position plus the audio queue length
 /// Returns 0 if engine is not initialized
@@ -1153,27 +1060,6 @@ pub extern "C" fn audio_engine_get_buffered_position(handle: *const AudioEngineH
     }));
 
     result.unwrap_or(0)
-}
-
-/// Set total bytes during Buffering state (for progress display)
-#[no_mangle]
-pub extern "C" fn audio_engine_get_total_bytes(handle: *const AudioEngineHandle) -> i64 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() {
-            return -1;
-        }
-
-        let state = unsafe { &*handle }.playback.read().unwrap().get_state();
-        match state {
-            PlaybackState::Buffering {
-                total_bytes: Some(t),
-                ..
-            } => t as i64,
-            _ => -1,
-        }
-    }));
-
-    result.unwrap_or(-1)
 }
 
 /// Free a string allocated by Rust
@@ -1228,89 +1114,25 @@ pub extern "C" fn audio_engine_get_channels(handle: *const AudioEngineHandle) ->
 }
 
 // ============================================================================
-// YouTube Service FFI bindings
+// YouTube FFI bindings
 // ============================================================================
-
-/// Opaque handle to a YouTube service instance
-pub struct YoutubeServiceHandle(pub tunes4r_youtube::YouTubeService);
-
-/// Create a new YouTube service instance
-#[no_mangle]
-pub extern "C" fn youtube_service_create() -> *mut YoutubeServiceHandle {
-    let result = std::panic::catch_unwind(|| {
-        Box::into_raw(Box::new(YoutubeServiceHandle(
-            tunes4r_youtube::YouTubeService::new(),
-        )))
-    });
-    match result {
-        Ok(handle) => handle,
-        Err(panic_info) => {
-            error!("[ffi] youtube_service_create PANIC: {:?}", panic_info);
-            std::ptr::null_mut()
-        }
-    }
-}
-
-/// Destroy a YouTube service instance
-#[no_mangle]
-pub unsafe extern "C" fn youtube_service_destroy(handle: *mut YoutubeServiceHandle) {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
-    }
-}
-
-/// Search YouTube videos
-#[no_mangle]
-pub unsafe extern "C" fn youtube_search(
-    handle: *mut YoutubeServiceHandle,
-    query: *const c_char,
-    limit: i32,
-) -> *mut c_char {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || query.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        let query_str = match CStr::from_ptr(query).to_str() {
-            Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
-        };
-
-        let yt = tunes4r_youtube::YouTube::new();
-        match tunes4r_youtube::search::search(yt.client().http(), query_str, limit as usize) {
-            Ok(results) => {
-                let json = serde_json::to_string(&results).unwrap_or_default();
-                CString::new(json).unwrap().into_raw()
-            }
-            Err(e) => {
-                error!("[ffi] youtube_search failed: {}", e);
-                CString::new(format!(r#"{{"error":"{}"}}"#, e))
-                    .unwrap()
-                    .into_raw()
-            }
-        }
-    }));
-
-    result.unwrap_or(std::ptr::null_mut())
-}
 
 /// Get audio stream URL for a video
 #[no_mangle]
-pub unsafe extern "C" fn youtube_get_stream_url(
-    handle: *mut YoutubeServiceHandle,
+pub extern "C" fn youtube_get_stream_url(
     video_id: *const c_char,
 ) -> *mut c_char {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || video_id.is_null() {
+        if video_id.is_null() {
             return std::ptr::null_mut();
         }
 
-        let video_id_str = match CStr::from_ptr(video_id).to_str() {
+        let video_id_str = match unsafe { CStr::from_ptr(video_id).to_str() } {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
 
-        log::info!(
+        info!(
             "[ffi] youtube_get_stream_url: resolving video_id={}",
             video_id_str
         );
@@ -1320,7 +1142,7 @@ pub unsafe extern "C" fn youtube_get_stream_url(
         match yt.videos().stream(video_id_str) {
             Ok(manifest) => {
                 let elapsed = start.elapsed();
-                log::info!(
+                info!(
                     "[ffi] youtube_get_stream_url: resolved in {}ms, formats: {} audio, {} video",
                     elapsed.as_millis(),
                     manifest.audio.len(),
@@ -1349,192 +1171,13 @@ pub unsafe extern "C" fn youtube_get_stream_url(
     result.unwrap_or(std::ptr::null_mut())
 }
 
-/// Get video metadata
-#[no_mangle]
-pub unsafe extern "C" fn youtube_get_video_info(
-    handle: *mut YoutubeServiceHandle,
-    video_id: *const c_char,
-) -> *mut c_char {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || video_id.is_null() {
-            return std::ptr::null_mut();
-        }
 
-        let video_id_str = match CStr::from_ptr(video_id).to_str() {
-            Ok(s) => s,
-            Err(_) => return std::ptr::null_mut(),
-        };
-
-        let yt = tunes4r_youtube::YouTube::new();
-        match yt.videos().get(video_id_str) {
-            Ok(info) => {
-                let json = serde_json::json!({
-                    "id": info.id,
-                    "title": info.title,
-                    "author": info.author,
-                    "duration": info.duration
-                });
-                CString::new(json.to_string()).unwrap().into_raw()
-            }
-            Err(e) => {
-                error!("[ffi] youtube_get_video_info failed: {}", e);
-                CString::new(format!(r#"{{"error":"{}"}}"#, e))
-                    .unwrap()
-                    .into_raw()
-            }
-        }
-    }));
-
-    result.unwrap_or(std::ptr::null_mut())
-}
-
-/// Download audio file
-#[no_mangle]
-pub unsafe extern "C" fn youtube_download_audio(
-    handle: *mut YoutubeServiceHandle,
-    video_id: *const c_char,
-    output_path: *const c_char,
-) -> i32 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || video_id.is_null() || output_path.is_null() {
-            return -1;
-        }
-
-        let video_id_str = match CStr::from_ptr(video_id).to_str() {
-            Ok(s) => s,
-            Err(_) => return -2,
-        };
-
-        let output_path_str = match CStr::from_ptr(output_path).to_str() {
-            Ok(s) => s,
-            Err(_) => return -3,
-        };
-
-        let yt = tunes4r_youtube::YouTube::new();
-        let manifest = match yt.videos().stream(video_id_str) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("[ffi] youtube_download_audio: failed to extract: {}", e);
-                return -4;
-            }
-        };
-
-        let audio_format = match manifest.best_audio() {
-            Some(a) => a,
-            None => {
-                error!("[ffi] youtube_download_audio: no audio formats found");
-                return -5;
-            }
-        };
-
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                error!(
-                    "[ffi] youtube_download_audio: failed to build client: {}",
-                    e
-                );
-                return -6;
-            }
-        };
-
-        let response = match client.get(&audio_format.url).send() {
-            Ok(r) => r,
-            Err(e) => {
-                error!("[ffi] youtube_download_audio: HTTP request failed: {}", e);
-                return -7;
-            }
-        };
-
-        if !response.status().is_success() {
-            error!("[ffi] youtube_download_audio: HTTP {}", response.status());
-            return -8;
-        }
-
-        use std::io::{Read, Write};
-        let mut stream = response;
-        let mut file = match std::fs::File::create(output_path_str) {
-            Ok(f) => f,
-            Err(e) => {
-                error!("[ffi] youtube_download_audio: create file error: {}", e);
-                return -9;
-            }
-        };
-
-        let mut total: usize = 0;
-        let mut buf = [0u8; 65536];
-        loop {
-            match stream.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    total += n;
-                    let _ = file.write_all(&buf[..n]);
-                }
-                Err(e) => {
-                    error!("[ffi] youtube_download_audio: read error: {}", e);
-                    return -10;
-                }
-            }
-        }
-
-        info!(
-            "[ffi] youtube_download_audio: downloaded {} bytes to {}",
-            total, output_path_str
-        );
-        0
-    }));
-
-    result.unwrap_or(-99)
-}
 
 /// Play audio from a YouTube URL, video ID, search query, or direct CDN URL.
 /// Uses the pipeline-based playback (YouTubeSource caches the CDN URL,
 /// avoiding re-resolution on seek — unlike the retired adaptive buffer path).
 #[no_mangle]
 pub unsafe extern "C" fn audio_engine_play_youtube(
-    handle: *mut AudioEngineHandle,
-    url: *const c_char,
-    cache_dir: *const c_char,
-) -> i32 {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if handle.is_null() || url.is_null() || cache_dir.is_null() {
-            return -1;
-        }
-
-        let url_str = match CStr::from_ptr(url).to_str() {
-            Ok(s) => s,
-            Err(_) => return -2,
-        };
-
-        let _cache_dir_str = match CStr::from_ptr(cache_dir).to_str() {
-            Ok(s) => s,
-            Err(_) => return -3,
-        };
-
-        let engine = unsafe { &mut *handle };
-        let mut eng = engine.playback.write().unwrap();
-        // play() auto-detects YouTube via source::from_uri and builds a
-        // pipeline with YouTubeSource — the CDN URL is cached for seek.
-        match eng.play(url_str, None) {
-            Ok(()) => 0,
-            Err(e) => {
-                error!("[ffi] audio_engine_play_youtube failed: {}", e);
-                -4
-            }
-        }
-    }));
-
-    result.unwrap_or(-99)
-}
-
-/// Play a stream using stream_download crate for progressive download.
-/// This is useful for streams that don't support range requests or for
-/// simpler streaming scenarios.
-#[no_mangle]
-pub unsafe extern "C" fn audio_engine_play_stream_with_downloader(
     handle: *mut AudioEngineHandle,
     url: *const c_char,
 ) -> i32 {
@@ -1549,18 +1192,13 @@ pub unsafe extern "C" fn audio_engine_play_stream_with_downloader(
         };
 
         let engine = unsafe { &mut *handle };
-        match engine
-            .playback
-            .write()
-            .unwrap()
-            .play_stream_with_downloader(url_str)
-        {
+        let mut eng = engine.playback.write().unwrap();
+        // play() auto-detects YouTube via source::from_uri and builds a
+        // pipeline with YouTubeSource — the CDN URL is cached for seek.
+        match eng.play(url_str, None) {
             Ok(()) => 0,
             Err(e) => {
-                error!(
-                    "[ffi] audio_engine_play_stream_with_downloader failed: {}",
-                    e
-                );
+                error!("[ffi] audio_engine_play_youtube failed: {}", e);
                 -3
             }
         }
@@ -1599,7 +1237,6 @@ pub unsafe extern "C" fn audio_engine_play_live(
     result.unwrap_or(-99)
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

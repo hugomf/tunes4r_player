@@ -11,9 +11,13 @@ pub mod radio;
 pub mod youtube;
 
 use crate::audio::error::PlaybackError;
+use crate::audio::stream::decorator::caching::CachingDecorator;
 use crate::models::StreamType;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
+
+/// Default in-memory cache size for YouTube streaming (1 MB).
+const YOUTUBE_CACHE_BYTES: usize = 1_048_576;
 
 /// Explicit capability that a source may or may not support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +47,38 @@ pub struct SourceInfo {
     pub stream_type: StreamType,
     pub uri: String,
     pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
 }
+
+/// Combined `Read + Seek` trait that can be used as a single trait bound
+/// in trait objects (Rust doesn't allow multiple non-auto traits in a dyn
+/// type).  Use `Box<dyn ReadSeek + Send + Sync + 'static>` everywhere a
+/// seek-capable reader is needed.
+pub trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
+/// Wraps a `Read + Send + Sync` reader and provides a `Seek` impl that
+/// always returns `Unsupported`.  Used when a source inherently cannot
+/// seek (e.g. HTTP live streams) but the trait requires a `Seek` bound.
+pub(crate) struct NonSeekable<R>(pub(crate) R);
+
+impl<R: Read> Read for NonSeekable<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl<R: Read> Seek for NonSeekable<R> {
+    fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "source is not seekable",
+        ))
+    }
+}
+
+// NonSeekable<R> implements ReadSeek because it implements Read + Seek
 
 /// A stream source provides raw audio bytes from some origin.
 ///
@@ -65,10 +100,15 @@ pub trait StreamSource: Send + Sync {
     fn open(
         &self,
         seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError>;
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError>;
 
     /// Total content length in bytes, if known.
     fn total_bytes(&self) -> Option<u64> {
+        None
+    }
+
+    /// Duration of the content in milliseconds, if known.
+    fn duration_ms(&self) -> Option<u64> {
         None
     }
 
@@ -96,14 +136,20 @@ pub fn from_uri(
     }
 
     let source: Box<dyn StreamSource> = if lower.contains("youtube.com") || lower.contains("youtu.be") {
-        Box::new(youtube::YouTubeSource::new(uri, client, None)?)
+        Box::new(CachingDecorator::new(
+            Box::new(youtube::YouTubeSource::new(uri, client, None)?),
+            YOUTUBE_CACHE_BYTES,
+        ))
     } else if uri.starts_with("http://") || uri.starts_with("https://") {
         Box::new(radio::RadioSource::new(uri, client))
     } else if std::path::Path::new(uri).exists() {
         Box::new(file::FileSource::new(uri))
     } else {
         // Assume YouTube video ID or search query
-        Box::new(youtube::YouTubeSource::new(uri, client, None)?)
+        Box::new(CachingDecorator::new(
+            Box::new(youtube::YouTubeSource::new(uri, client, None)?),
+            YOUTUBE_CACHE_BYTES,
+        ))
     };
 
     // Wrap with cache decorator when a cache directory is provided

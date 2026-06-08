@@ -38,6 +38,10 @@ path = "examples/play_youtube_with_seek.rs"
 name = "tui_player"
 path = "examples/tui_player.rs"
 
+[[example]]
+name = "winamptest_ui"
+path = "examples/winamptest_ui.rs"
+
 [features]
 default = ["rustls-platform-verifier"]
 rustls-platform-verifier = ["dep:rustls-platform-verifier", "dep:rustls"]
@@ -52,14 +56,13 @@ cbindgen = "0.29.2"
 [dependencies]
 tunes4r-core = { path = "crates/core" }
 tunes4r-youtube = { path = "crates/youtube" }
-flutter_rust_bridge = "2.3"
-log = "0.4"
 parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 cpal = "0.17.3"
-tracing-subscriber = "0.3"
 symphonia = { version = "0.6", features = ["mp3", "aac", "flac", "vorbis", "ogg", "mkv", "isomp4"] }
 symphonia-bundle-mp3 = "0.6"
 symphonia-codec-aac = "0.6"
@@ -69,7 +72,7 @@ symphonia-adapter-libopus = { version = "0.3", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json", "stream", "blocking", "rustls-tls", "rustls-tls-native-roots"], default-features = false }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "rustls-tls-native-roots"] }
+tracing-log = "0.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"
@@ -79,6 +82,10 @@ android_logger = "0.15"
 
 [target.'cfg(target_os = "android")'.dependencies.log]
 version = "0.4"
+
+[target.'cfg(target_os = "android")'.dependencies.tracing]
+version = "0.1"
+features = ["log"]
 
 [dependencies.rustls-platform-verifier]
 version = "0.6.2"
@@ -92,3 +99,8 @@ optional = true
 [dev-dependencies]
 ratatui = "0.29"
 crossterm = "0.28"
+eframe = { version = "0.34", features = ["default"] }
+egui = "0.34"
+egui_extras = { version = "0.34", features = ["all_loaders"] }
+rfd = "0.15"
+log = "0.4"

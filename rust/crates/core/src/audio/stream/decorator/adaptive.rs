@@ -5,7 +5,7 @@
 
 use crate::audio::error::PlaybackError;
 use crate::audio::stream::pipe::new_pipe;
-use crate::audio::stream::source::{Capability, SourceInfo, StreamSource};
+use crate::audio::stream::source::{Capability, ReadSeek, SourceInfo, StreamSource};
 use std::io::Read;
 use std::sync::Arc;
 use std::thread;
@@ -37,7 +37,7 @@ impl StreamSource for AdaptiveBufferDecorator {
     fn open(
         &self,
         seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         let mut inner_reader = self.inner.open(seek_to)?;
         let (writer, reader) = new_pipe();
         let writer = Arc::new(writer);
@@ -46,7 +46,6 @@ impl StreamSource for AdaptiveBufferDecorator {
             .name("adaptive-prefetch".into())
             .spawn(move || {
                 let mut buf = [0u8; 8192];
-                let start = std::time::Instant::now();
                 loop {
                     match inner_reader.read(&mut buf) {
                         Ok(0) => {
@@ -55,10 +54,6 @@ impl StreamSource for AdaptiveBufferDecorator {
                         }
                         Ok(n) => {
                             writer.push(&buf[..n]);
-                            // Rate-limit logging: once per 30s
-                            if start.elapsed().as_secs().is_multiple_of(30) && n == 0 {
-                                log::debug!("[adaptive] Pre-fetching... {} bytes", n);
-                            }
                         }
                         Err(e) => {
                             log::error!("[adaptive] Read error: {}", e);
@@ -103,6 +98,8 @@ mod tests {
                     stream_type: crate::models::StreamType::Seekable { total_bytes: 0 },
                     uri: "test://silent".into(),
                     title: None,
+                    artist: None,
+                    album: None,
                 },
             }
         }
@@ -121,7 +118,7 @@ mod tests {
         fn open(
             &self,
             _: Option<u64>,
-        ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
             Ok(Box::new(std::io::Cursor::new(vec![0u8; 100])))
         }
     }

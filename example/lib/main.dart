@@ -5,6 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tunes4r_player/tunes4r_player.dart';
 
+String formatMs(int ms) {
+  final s = ms ~/ 1000;
+  final m = s ~/ 60;
+  final r = s % 60;
+  return '$m:${r.toString().padLeft(2, '0')}';
+}
+
 void main() {
   runApp(const Tunes4rPlayerExampleApp());
 }
@@ -75,8 +82,8 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
           if (state == PlaybackState.stopped) {
             _activeSource = _SourceType.none;
           }
-          if (state == PlaybackState.error || state == PlaybackState.stopped) {
-            _error = _engine?.loadError ?? _engine?.lastError ?? '';
+          if (state == PlaybackState.error) {
+            _error = _engine?.loadError ?? '';
           }
         });
       });
@@ -99,17 +106,22 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
         if (!mounted) return;
         final pos = event.intParam;
         switch (event.eventType) {
-          case engineEventSeekStarted:
+          case EngineEventType.seekStarted:
             setState(() => _lastSeekEvent = 'Seek started: ${pos}ms');
             break;
-          case engineEventSeekCompleted:
+          case EngineEventType.seekCompleted:
             setState(() => _lastSeekEvent = 'Seek completed: ${pos}ms');
             break;
-          case engineEventEndOfStream:
+          case EngineEventType.endOfStream:
             setState(() => _lastSeekEvent = 'End of stream');
             break;
-          case engineEventError:
+          case EngineEventType.error:
             setState(() => _lastSeekEvent = 'Error: $pos');
+            break;
+          case EngineEventType.none:
+          case EngineEventType.stateChanged:
+          case EngineEventType.positionReset:
+          case EngineEventType.seekQueued:
             break;
         }
       });
@@ -152,13 +164,6 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
       case PlaybackState.error:
         return 'error';
     }
-  }
-
-  String _formatMs(int ms) {
-    final s = ms ~/ 1000;
-    final m = s ~/ 60;
-    final r = s % 60;
-    return '$m:${r.toString().padLeft(2, '0')}';
   }
 
   void _commitSeek(double v) {
@@ -367,7 +372,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
             _bufferedSlider(_SourceType.live),
             const SizedBox(height: 4),
             Text(
-              'canSeek: $_canSeek  ·  cache: ${_formatMs(_durationMs)}',
+              'canSeek: $_canSeek  ·  cache: ${formatMs(_durationMs)}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -473,13 +478,6 @@ class _BufferedSliderState extends State<_BufferedSlider> {
   bool _isDragging = false;
   double _dragValue = 0;
 
-  String _formatMs(int ms) {
-    final s = ms ~/ 1000;
-    final m = s ~/ 60;
-    final r = s % 60;
-    return '$m:${r.toString().padLeft(2, '0')}';
-  }
-
   @override
   Widget build(BuildContext context) {
     final total = widget.isActive && widget.durationMs > 0
@@ -502,7 +500,7 @@ class _BufferedSliderState extends State<_BufferedSlider> {
           SizedBox(
             width: 52,
             child: Text(
-              _formatMs(widget.positionMs),
+              formatMs(widget.positionMs),
               textAlign: TextAlign.right,
               style: const TextStyle(
                 fontFeatures: [FontFeature.tabularFigures()],
@@ -554,7 +552,7 @@ class _BufferedSliderState extends State<_BufferedSlider> {
           SizedBox(
             width: 52,
             child: Text(
-              _formatMs(widget.durationMs),
+              formatMs(widget.durationMs),
               style: const TextStyle(fontSize: 13),
             ),
           ),

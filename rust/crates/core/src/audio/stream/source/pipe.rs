@@ -8,8 +8,7 @@ use crate::audio::error::PlaybackError;
 use crate::audio::stream::pipe::PipeWriter;
 use crate::models::StreamType;
 
-use super::{Capability, SourceInfo, SourceKind, StreamSource};
-use std::io::Read;
+use super::{Capability, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -27,6 +26,8 @@ impl PipeSource {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: url.to_string(),
                 title: None,
+                artist: None,
+                album: None,
             },
             writer: Arc::new(std::sync::Mutex::new(None)),
             seek_requested: Arc::new(AtomicBool::new(false)),
@@ -74,7 +75,7 @@ impl StreamSource for PipeSource {
     fn open(
         &self,
         _seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         let (writer, reader) = crate::audio::stream::pipe::new_pipe();
         *self.writer.lock().unwrap() = Some(Arc::new(writer));
         self.seek_requested.store(false, Ordering::Release);

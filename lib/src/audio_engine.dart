@@ -1,8 +1,167 @@
 import 'dart:async';
 import 'dart:ffi';
 
+import 'package:flutter/foundation.dart';
+
 import 'models.dart';
 import 'tunes4r_player_ffi.dart';
+
+// ---------------------------------------------------------------------------
+// Named polling interval constants
+// ---------------------------------------------------------------------------
+
+/// Interval (ms) between spectrum data polls (10 Hz).
+const _spectrumPollIntervalMs = 100;
+
+/// Interval (ms) between position polls, vsync-aligned (~60 Hz).
+const _positionPollIntervalMs = 16;
+
+/// Interval (ms) between event queue drains (~60 Hz).
+const _eventPollIntervalMs = 16;
+
+/// Interval (ms) between ring buffer state polls (5 Hz).
+const _bufferPollIntervalMs = 200;
+
+// ---------------------------------------------------------------------------
+// Poller engine — encapsulates timers and stream controllers
+// ---------------------------------------------------------------------------
+
+/// Encapsulates the periodic polling timers and their associated stream
+/// controllers for [AudioEngine]. Owns all five broadcast streams so that
+/// [AudioEngine] can focus on playback control and lifecycle.
+class _EnginePoller {
+  final Tunes4rFFI _ffi;
+  Pointer<Void>? _handle;
+  bool _active = false;
+
+  Timer? _spectrumPoller;
+  Timer? _positionPoller;
+  Timer? _eventPoller;
+  Timer? _bufferPoller;
+
+  final StreamController<PlaybackState> stateCtrl =
+      StreamController<PlaybackState>.broadcast();
+  final StreamController<List<double>> spectrumCtrl =
+      StreamController<List<double>>.broadcast();
+  final StreamController<PlaybackPosition> positionCtrl =
+      StreamController<PlaybackPosition>.broadcast();
+  final StreamController<EngineEvent> eventCtrl =
+      StreamController<EngineEvent>.broadcast();
+  final StreamController<AdaptiveRingBuffer> bufferCtrl =
+      StreamController<AdaptiveRingBuffer>.broadcast();
+
+  _EnginePoller(this._ffi);
+
+  /// Start all pollers using the given native handle.
+  ///
+  /// If already active (e.g. from a previous [start] call), the new handle
+  /// is silently ignored. This is safe because the handle is stable for the
+  /// engine's lifetime — it is only reassigned on a fresh [AudioEngine]
+  /// instance.
+  void start(Pointer<Void> handle) {
+    if (_active) return;
+    _active = true;
+    _handle = handle;
+
+    _spectrumPoller ??= Timer.periodic(
+      const Duration(milliseconds: _spectrumPollIntervalMs),
+      (_) {
+        if (!_active || _handle == null) return;
+        try {
+          final s = _ffi.getSpectrum(_handle!);
+          if (s.isNotEmpty) spectrumCtrl.add(s);
+        } catch (e) {
+          debugPrint('[tunes4r] spectrum poll error: $e');
+        }
+      },
+    );
+
+    _positionPoller ??= Timer.periodic(
+      const Duration(milliseconds: _positionPollIntervalMs),
+      (_) {
+        if (!_active || _handle == null) return;
+        try {
+          positionCtrl.add(_ffi.getPosition(_handle!));
+        } catch (e) {
+          debugPrint('[tunes4r] position poll error: $e');
+        }
+      },
+    );
+
+    _eventPoller ??= Timer.periodic(
+      const Duration(milliseconds: _eventPollIntervalMs),
+      (_) {
+        if (!_active || _handle == null) return;
+        try {
+          while (true) {
+            final e = _ffi.pollEvent(_handle!);
+            if (e.eventType == engineEventNone) break;
+            final eventType = EngineEventType.fromValue(e.eventType);
+            final event = EngineEvent(
+              eventType: eventType,
+              intParam: e.intParam,
+            );
+            eventCtrl.add(event);
+            if (eventType == EngineEventType.stateChanged) {
+              stateCtrl.add(PlaybackState.fromValue(event.intParam));
+            }
+          }
+        } catch (e) {
+          debugPrint('[tunes4r] event poll error: $e');
+        }
+      },
+    );
+
+    _bufferPoller ??= Timer.periodic(
+      const Duration(milliseconds: _bufferPollIntervalMs),
+      (_) {
+        if (!_active || _handle == null) return;
+        try {
+          final b = _ffi.getDownloadBuffer(_handle!);
+          bufferCtrl.add(
+            AdaptiveRingBuffer(
+              capacityMs: b.capacityMs,
+              readOffsetMs: b.readOffsetMs,
+              writeOffsetMs: b.writeOffsetMs,
+              totalMs: b.totalMs,
+              isComplete: b.isComplete,
+            ),
+          );
+        } catch (e) {
+          debugPrint('[tunes4r] buffer poll error: $e');
+        }
+      },
+    );
+  }
+
+  /// Stop all pollers. Does not close stream controllers.
+  void stop() {
+    _active = false;
+    _handle = null;
+    _spectrumPoller?.cancel();
+    _spectrumPoller = null;
+    _positionPoller?.cancel();
+    _positionPoller = null;
+    _eventPoller?.cancel();
+    _eventPoller = null;
+    _bufferPoller?.cancel();
+    _bufferPoller = null;
+  }
+
+  /// Stop polling and release stream controllers.
+  void dispose() {
+    stop();
+    stateCtrl.close();
+    spectrumCtrl.close();
+    positionCtrl.close();
+    eventCtrl.close();
+    bufferCtrl.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AudioEngine
+// ---------------------------------------------------------------------------
 
 /// High-level audio engine that manages a native Rust playback engine.
 ///
@@ -15,28 +174,21 @@ class AudioEngine {
   final Tunes4rFFI _ffi;
   Pointer<Void>? _handle;
   bool _disposed = false;
+  final _EnginePoller _poller;
 
-  Timer? _spectrumPoller;
-  Timer? _positionPoller;
-  Timer? _eventPoller;
-  Timer? _bufferPoller;
-
-  final StreamController<PlaybackState> _stateCtrl =
-      StreamController<PlaybackState>.broadcast();
-  final StreamController<List<double>> _spectrumCtrl =
-      StreamController<List<double>>.broadcast();
-  final StreamController<PlaybackPosition> _positionCtrl =
-      StreamController<PlaybackPosition>.broadcast();
-  final StreamController<EngineEvent> _eventCtrl =
-      StreamController<EngineEvent>.broadcast();
-  final StreamController<AdaptiveRingBuffer> _bufferCtrl =
-      StreamController<AdaptiveRingBuffer>.broadcast();
+  /// Returns the native handle or throws if disposed.
+  Pointer<Void> get _h {
+    if (_disposed) {
+      throw const Tunes4rEngineException('AudioEngine has been disposed');
+    }
+    return _handle!;
+  }
 
   /// Stream of playback state changes (driven by native events).
-  Stream<PlaybackState> get stateStream => _stateCtrl.stream;
+  Stream<PlaybackState> get stateStream => _poller.stateCtrl.stream;
 
   /// Stream of FFT spectrum data (polled every 100ms).
-  Stream<List<double>> get spectrumStream => _spectrumCtrl.stream;
+  Stream<List<double>> get spectrumStream => _poller.spectrumCtrl.stream;
 
   /// Stream of playback position updates.
   ///
@@ -47,12 +199,12 @@ class AudioEngine {
   ///
   /// Subscribers should use `distinct()` to skip duplicates if they only
   /// care about changes.
-  Stream<PlaybackPosition> get positionStream => _positionCtrl.stream;
+  Stream<PlaybackPosition> get positionStream => _poller.positionCtrl.stream;
 
   /// Stream of native engine events (state changes, seek lifecycle,
   /// end-of-stream, errors). The previous `stateStream` is still driven
   /// from these events for backward compatibility.
-  Stream<EngineEvent> get playbackEventStream => _eventCtrl.stream;
+  Stream<EngineEvent> get playbackEventStream => _poller.eventCtrl.stream;
 
   /// Stream of adaptive ring buffer updates for progressive streams
   /// (HTTP / YouTube). Polled every 200ms — slow enough to be cheap, fast
@@ -60,9 +212,10 @@ class AudioEngine {
   ///
   /// For local files the ring covers the full duration from the start
   /// (`AdaptiveRingBuffer.isFullyBuffered == true`).
-  Stream<AdaptiveRingBuffer> get downloadBufferStream => _bufferCtrl.stream;
+  Stream<AdaptiveRingBuffer> get downloadBufferStream =>
+      _poller.bufferCtrl.stream;
 
-  AudioEngine._(this._ffi, this._handle);
+  AudioEngine._(this._ffi, this._handle) : _poller = _EnginePoller(_ffi);
 
   /// Create a new audio engine instance.
   ///
@@ -105,70 +258,9 @@ class AudioEngine {
 
   /// Start polling for state, spectrum, position, and event updates.
   /// Called automatically by [play], [resume], etc.
-  void startPolling() {
-    _spectrumPoller ??= Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_disposed || _handle == null) return;
-      try {
-        final s = _ffi.getSpectrum(_handle!);
-        if (s.isNotEmpty) _spectrumCtrl.add(s);
-      } catch (_) {}
-    });
-    // Vsync-aligned position polling (~60Hz). Dedup is done by callers via
-    // Stream.distinct(), or in their setState logic.
-    _positionPoller ??= Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (_disposed || _handle == null) return;
-      try {
-        _positionCtrl.add(_ffi.getPosition(_handle!));
-      } catch (_) {}
-    });
-    // Event drain. We poll at 60Hz so latency-sensitive events (seek
-    // completed, end-of-stream) are delivered promptly without busy-spinning.
-    _eventPoller ??= Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (_disposed || _handle == null) return;
-      try {
-        // Drain the whole queue per tick to avoid backpressure.
-        while (true) {
-          final e = _ffi.pollEvent(_handle!);
-          if (e.eventType == engineEventNone) break;
-          final event = EngineEvent(
-            eventType: e.eventType,
-            intParam: e.intParam,
-          );
-          _eventCtrl.add(event);
-          if (event.eventType == engineEventStateChanged) {
-            _stateCtrl.add(PlaybackState.fromValue(event.intParam));
-          }
-        }
-      } catch (_) {}
-    });
-    // Ring buffer poller (5Hz). Cheap to read, changes slowly.
-    _bufferPoller ??= Timer.periodic(const Duration(milliseconds: 200), (_) {
-      if (_disposed || _handle == null) return;
-      try {
-        final b = _ffi.getDownloadBuffer(_handle!);
-        _bufferCtrl.add(
-          AdaptiveRingBuffer(
-            capacityMs: b.capacityMs,
-            readOffsetMs: b.readOffsetMs,
-            writeOffsetMs: b.writeOffsetMs,
-            totalMs: b.totalMs,
-            isComplete: b.isComplete,
-          ),
-        );
-      } catch (_) {}
-    });
-  }
+  void startPolling() => _poller.start(_h);
 
-  void stopPolling() {
-    _spectrumPoller?.cancel();
-    _spectrumPoller = null;
-    _positionPoller?.cancel();
-    _positionPoller = null;
-    _eventPoller?.cancel();
-    _eventPoller = null;
-    _bufferPoller?.cancel();
-    _bufferPoller = null;
-  }
+  void stopPolling() => _poller.stop();
 
   // ---------------------------------------------------------------------------
   // Playback control
@@ -182,140 +274,97 @@ class AudioEngine {
   /// connection speed. Larger values allow wider seek range for
   /// progressive streams but use more memory.
   int play(String uri, {int bufferSizeMs = -1}) {
-    _ensureAlive();
     startPolling();
-    final result = _ffi.play(_handle!, uri, bufferSizeMs: bufferSizeMs);
-    // Synchronous position reset so the UI snaps to 0 immediately,
-    // before the first 16ms position poll fires.
-    _positionCtrl.add(_ffi.getPosition(_handle!));
+    final result = _ffi.play(_h, uri, bufferSizeMs: bufferSizeMs);
+    _poller.positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
 
   /// Play a YouTube URL or video ID.
-  int playYoutube(String url, {String? cacheDir}) {
-    _ensureAlive();
+  int playYoutube(String url) {
     startPolling();
-    final result = _ffi.playYoutube(_handle!, url, cacheDir ?? '');
-    _positionCtrl.add(_ffi.getPosition(_handle!));
+    final result = _ffi.playYoutube(_h, url);
+    _poller.positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
 
-  /// Play an HTTP stream via the pipeline-based playback.
-  /// Uses the auto-detecting play() path (source::from_uri) which
-  /// caches the CDN URL for efficient seeks, unlike the retired
-  /// playStreamWithDownloader path.
+  /// Play an HTTP stream. Deprecated — use [play] instead; it
+  /// auto-detects the source type.
+  @Deprecated('Use play() instead — it auto-detects the source type.')
   int playStream(String url) {
-    _ensureAlive();
     startPolling();
-    // Delegate to play() which auto-detects the source type and
-    // builds the correct pipeline (YouTube, radio, etc.).
-    final result = _ffi.play(_handle!, url);
-    _positionCtrl.add(_ffi.getPosition(_handle!));
+    final result = _ffi.play(_h, url);
+    _poller.positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
 
   /// Play a live internet stream with backward-seek support.
   ///
   /// [cacheMaxMs] controls how many ms of audio are kept in the ring
-  /// buffer for seeking backward (default 30 min = 1_800_000 ms).
+  /// buffer for seeking backward (default 30 min).
   int playLive(String url, {int cacheMaxMs = 30 * 60 * 1000}) {
-    _ensureAlive();
     startPolling();
-    final result = _ffi.playLive(_handle!, url, cacheMaxMs);
-    _positionCtrl.add(_ffi.getPosition(_handle!));
+    final result = _ffi.playLive(_h, url, cacheMaxMs);
+    _poller.positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
 
   /// Push raw audio bytes to the Rust engine (pipe mode).
   void pushAudioBytes(Pointer<Uint8> data, int len) {
-    _ensureAlive();
-    _ffi.pushAudioBytes(_handle!, data, len);
+    _ffi.pushAudioBytes(_h, data, len);
   }
 
   /// Signal end of pipe stream.
   void endAudioStream() {
-    _ensureAlive();
-    _ffi.endAudioStream(_handle!);
+    _ffi.endAudioStream(_h);
   }
 
   void pause() {
-    _ensureAlive();
-    _ffi.pause(_handle!);
+    _ffi.pause(_h);
   }
 
   void resume() {
-    _ensureAlive();
-    _ffi.resume(_handle!);
+    _ffi.resume(_h);
   }
 
   void stop() {
-    _ensureAlive();
-    _ffi.stop(_handle!);
+    _ffi.stop(_h);
     stopPolling();
   }
 
   void seek(int positionMs) {
-    _ensureAlive();
-    _ffi.seek(_handle!, positionMs);
-    // The decode thread seeds samples_played asynchronously after probing
-    // the format. The position poller (16ms) will pick up the correct value
-    // shortly — no need to read back here (it would return 0 transiently).
+    _ffi.seek(_h, positionMs);
   }
 
   void setVolume(double volume) {
-    _ensureAlive();
-    _ffi.setVolume(_handle!, volume.clamp(0.0, 1.0));
+    _ffi.setVolume(_h, volume.clamp(0.0, 1.0));
   }
 
   // ---------------------------------------------------------------------------
   // State queries
   // ---------------------------------------------------------------------------
 
-  PlaybackState get state {
-    _ensureAlive();
-    return PlaybackState.fromValue(_ffi.getState(_handle!));
-  }
+  PlaybackState get state =>
+      PlaybackState.fromValue(_ffi.getState(_h));
 
-  bool get isPlaying {
-    _ensureAlive();
-    return _ffi.isPlaying(_handle!);
-  }
+  bool get isPlaying => _ffi.isPlaying(_h);
 
-  bool get canSeek {
-    _ensureAlive();
-    return _ffi.canSeek(_handle!);
-  }
+  bool get canSeek => _ffi.canSeek(_h);
 
-  bool get canDownload {
-    _ensureAlive();
-    return _ffi.canDownload(_handle!);
-  }
+  bool get canDownload => _ffi.canDownload(_h);
 
-  double get volume {
-    _ensureAlive();
-    return _ffi.getVolume(_handle!);
-  }
+  double get volume => _ffi.getVolume(_h);
 
-  int get positionMs {
-    _ensureAlive();
-    return _ffi.getPosition(_handle!).currentMs;
-  }
+  int get positionMs => _ffi.getPosition(_h).currentMs;
 
-  int get durationMs {
-    _ensureAlive();
-    return _ffi.getPosition(_handle!).totalMs;
-  }
+  int get durationMs => _ffi.getPosition(_h).totalMs;
 
-  int get bufferedPositionMs {
-    _ensureAlive();
-    return _ffi.getBufferedPosition(_handle!);
-  }
+  int get bufferedPositionMs => _ffi.getBufferedPosition(_h);
 
   /// Snapshot of the current ring buffer (one-shot read; prefer
   /// [downloadBufferStream] for live updates).
   AdaptiveRingBuffer get downloadBuffer {
-    _ensureAlive();
-    final b = _ffi.getDownloadBuffer(_handle!);
+    final b = _ffi.getDownloadBuffer(_h);
     return AdaptiveRingBuffer(
       capacityMs: b.capacityMs,
       readOffsetMs: b.readOffsetMs,
@@ -325,30 +374,13 @@ class AudioEngine {
     );
   }
 
-  int get sampleRate {
-    _ensureAlive();
-    return _ffi.getSampleRate(_handle!);
-  }
+  int get sampleRate => _ffi.getSampleRate(_h);
 
-  int get channels {
-    _ensureAlive();
-    return _ffi.getChannels(_handle!);
-  }
+  int get channels => _ffi.getChannels(_h);
 
-  List<double> getSpectrum() {
-    _ensureAlive();
-    return _ffi.getSpectrum(_handle!);
-  }
+  List<double> getSpectrum() => _ffi.getSpectrum(_h);
 
-  String? get loadError {
-    _ensureAlive();
-    return _ffi.getLoadError(_handle!);
-  }
-
-  String? get lastError {
-    _ensureAlive();
-    return _ffi.getLastError(_handle!);
-  }
+  String? get loadError => _ffi.getLoadError(_h);
 
   // ---------------------------------------------------------------------------
   // YouTube service
@@ -356,38 +388,25 @@ class AudioEngine {
 
   /// Look up the best audio stream URL for a YouTube video ID.
   String? youtubeGetStreamUrl(String videoId) {
-    _ensureAlive();
-    final svc = _ffi.youtubeServiceCreate();
-    try {
-      return _ffi.youtubeGetStreamUrl(svc, videoId);
-    } finally {
-      _ffi.youtubeServiceDestroy(svc);
-    }
+    return _ffi.youtubeGetStreamUrl(videoId);
   }
 
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  void _ensureAlive() {
-    if (_disposed) {
-      throw const Tunes4rEngineException('AudioEngine has been disposed');
-    }
-  }
-
   /// Release the native engine handle.
+  ///
+  /// Order is intentional: pollers (timers + stream controllers) are stopped
+  /// and closed first, so any final native events during [destroyEngine] have
+  /// nowhere to go — they are harmless because the engine is being torn down.
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    stopPolling();
+    _poller.dispose();
     if (_handle != null) {
       _ffi.destroyEngine(_handle!);
       _handle = null;
     }
-    _stateCtrl.close();
-    _spectrumCtrl.close();
-    _positionCtrl.close();
-    _eventCtrl.close();
-    _bufferCtrl.close();
   }
 }

@@ -9,7 +9,7 @@ use crate::audio::engine::types::HttpClient;
 use crate::audio::error::PlaybackError;
 use crate::models::{LiveByteRing, LiveByteReader, StreamType};
 
-use super::{Capability, SourceInfo, SourceKind, StreamSource};
+use super::{Capability, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use log::info;
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,6 +42,8 @@ impl LiveSource {
                 },
                 uri: url.to_string(),
                 title: Some("Live Stream".into()),
+                artist: None,
+                album: None,
             },
             client,
             url: url.to_string(),
@@ -139,7 +141,7 @@ impl StreamSource for LiveSource {
     fn open(
         &self,
         seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         let ring = Arc::clone(&self.ring);
         let total_written = self.total_written.load(Ordering::Relaxed);
 

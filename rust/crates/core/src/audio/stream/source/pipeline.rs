@@ -21,9 +21,8 @@ use super::file::FileSource;
 use super::pipe::PipeSource;
 use super::radio::RadioSource;
 use super::youtube::YouTubeSource;
-use super::{Capability, SourceInfo, SourceKind, StreamSource};
+use super::{Capability, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use crate::audio::error::PlaybackError;
-use std::io::Read;
 use std::sync::Arc;
 
 /// A fully built stream pipeline — source + decorators assembled.
@@ -36,7 +35,7 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn open(
         &self,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         self.source.open(None)
     }
 

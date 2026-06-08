@@ -10,6 +10,8 @@ use crate::dsp::RmsSpectrumAnalyzer;
 use cpal::traits::{HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+#[cfg(target_os = "android")]
+use crate::audio::stream::source::ReadSeek;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -400,6 +402,7 @@ pub fn play_stream_from_pipe_internal(
         channels_out,
         total_duration_ms,
         load_error,
+        Arc::new(AtomicU64::new(0)),
         Arc::new(AtomicU64::new(0)),
     );
 }
@@ -871,6 +874,7 @@ pub fn play_stream_from_pipe_internal(
         total_duration_ms,
         load_error,
         Arc::new(AtomicU64::new(0)),
+        Arc::new(AtomicU64::new(0)),
     );
 }
 
@@ -898,7 +902,7 @@ pub fn play_live_internal(
     log::info!("[live] play_live_internal (Android): {}", url);
 
     let seek_pos = seek_target_ms.load(Ordering::Relaxed);
-    let reader: Box<dyn Read + Send + Sync + 'static> = if seek_pos > 0 {
+    let reader: Box<dyn ReadSeek + Send + Sync + 'static> = if seek_pos > 0 {
         let r = ring.lock().unwrap();
         let total = r.total_written();
         let head_ms = cache_head_ms.max(1);
@@ -958,7 +962,7 @@ pub fn play_live_internal(
             });
         });
 
-        Box::new(pipe_reader) as Box<dyn Read + Send + Sync + 'static>
+        Box::new(pipe_reader) as Box<dyn ReadSeek + Send + Sync + 'static>
     };
 
     total_duration_ms.store(cache_max_ms, Ordering::Relaxed);
@@ -974,5 +978,6 @@ pub fn play_live_internal(
         total_duration_ms,
         load_error,
         seek_target_ms,
+        Arc::new(AtomicU64::new(0)),
     );
 }

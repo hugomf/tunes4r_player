@@ -3,7 +3,7 @@ use std::marker::{Send, Sync};
 use std::thread;
 
 use crate::ffi::AudioEngineHandle;
-use log::info;
+use tracing::{error, info};
 
 struct ThreadSafeEngineHandle(*mut AudioEngineHandle);
 
@@ -27,7 +27,7 @@ pub fn fetch_and_pipe(url: &str, engine: &AudioEngineHandle) -> Result<(), Strin
     thread::spawn(move || {
         info!("[fetch] Background thread starting with URL: {}", url_owned);
         if let Err(e) = fetch_and_pipe_internal(&url_owned, engine_ptr) {
-            info!("[fetch] Error: {}", e);
+            error!("[fetch] Error: {}", e);
         }
     });
 

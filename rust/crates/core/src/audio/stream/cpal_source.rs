@@ -19,8 +19,30 @@ use cpal::traits::DeviceTrait;
 use cpal::{Stream, StreamConfig};
 use log::info;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Global volume (0.0 to 1.0), stored as f32 bits.
+static VOLUME: AtomicU32 = AtomicU32::new(f32::to_bits(1.0));
+/// Global balance (0.0 = full-left, 0.5 = center, 1.0 = full-right),
+/// stored as f32 bits.
+static BALANCE: AtomicU32 = AtomicU32::new(f32::to_bits(0.5));
+
+pub fn set_volume_gain(v: f32) {
+    VOLUME.store(v.to_bits(), Ordering::Relaxed);
+}
+
+pub fn get_volume_gain() -> f32 {
+    f32::from_bits(VOLUME.load(Ordering::Relaxed))
+}
+
+pub fn set_balance_gain(b: f32) {
+    BALANCE.store(b.to_bits(), Ordering::Relaxed);
+}
+
+pub fn get_balance_gain() -> f32 {
+    f32::from_bits(BALANCE.load(Ordering::Relaxed))
+}
 
 /// Type alias for the shared ring buffer between the decode thread
 /// (producer) and the cpal callback (consumer).
@@ -111,6 +133,21 @@ pub fn run_output_callback(
         }
     }
     if real_count > 0 {
+        // Apply volume + balance gain to interleaved stereo samples
+        let vol = get_volume_gain();
+        let bal = get_balance_gain().clamp(0.0, 1.0);
+        // Winamp-style balance: at 0.0 → full left, 0.5 → center (both at full), 1.0 → full right
+        let (left_gain, right_gain) = if bal <= 0.5 {
+            (vol, vol * bal * 2.0)
+        } else {
+            (vol * (1.0 - bal) * 2.0, vol)
+        };
+
+        for frame in data.chunks_exact_mut(2) {
+            frame[0] *= left_gain;
+            frame[1] *= right_gain;
+        }
+
         samples_played.fetch_add(real_count, Ordering::Relaxed);
     }
 }

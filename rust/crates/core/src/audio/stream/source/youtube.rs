@@ -22,7 +22,7 @@ use crate::audio::error::PlaybackError;
 use crate::models::StreamType;
 use tunes4r_youtube::YouTube;
 
-use super::{Capability, SourceInfo, SourceKind, StreamSource};
+use super::{Capability, NonSeekable, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use log::{debug, info};
 use std::io::{self, Cursor, Read};
 use std::sync::{Arc, Mutex};
@@ -73,12 +73,12 @@ impl<R: Read> Read for TeeReader<R> {
 #[cfg(not(target_os = "android"))]
 struct ChainReader {
     head: Cursor<Vec<u8>>,
-    tail: Box<dyn Read + Send + Sync + 'static>,
+    tail: Box<dyn ReadSeek + Send + Sync + 'static>,
 }
 
 #[cfg(not(target_os = "android"))]
 impl ChainReader {
-    fn new(header_cache: Vec<u8>, tail: Box<dyn Read + Send + Sync + 'static>) -> Self {
+    fn new(header_cache: Vec<u8>, tail: Box<dyn ReadSeek + Send + Sync + 'static>) -> Self {
         Self {
             head: Cursor::new(header_cache),
             tail,
@@ -157,6 +157,8 @@ impl YouTubeSource {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: input.to_string(),
                 title: Some(title),
+                artist: None,
+                album: None,
             },
             client,
             audio_url,
@@ -194,7 +196,7 @@ impl StreamSource for YouTubeSource {
     fn open(
         &self,
         seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         #[cfg(not(target_os = "android"))]
         {
             match seek_to {
@@ -242,7 +244,7 @@ impl StreamSource for YouTubeSource {
                     let sink = Arc::clone(&self.header_cache);
                     let tee = TeeReader::new(resp, sink);
                     info!("[youtube-source] Initial open — tee-reading header into cache");
-                    Ok(Box::new(tee))
+                    Ok(Box::new(NonSeekable(tee)))
                 }
 
                 // -------------------------------------------------------
@@ -292,14 +294,14 @@ impl StreamSource for YouTubeSource {
                         // Fall back to a plain response; Symphonia may fail to probe
                         // if it's a mid-stream offset, but this is a corner-case.
                         info!("[youtube-source] Seek with empty header cache — falling back to raw range response");
-                        return Ok(Box::new(resp));
+                        return Ok(Box::new(NonSeekable(resp)));
                     }
 
                     info!(
                         "[youtube-source] Seek — prepending {} cached header bytes before range body",
                         header.len()
                     );
-                    Ok(Box::new(ChainReader::new(header, Box::new(resp))))
+                    Ok(Box::new(NonSeekable(ChainReader::new(header, Box::new(NonSeekable(resp))))))
                 }
             }
         }
@@ -372,6 +374,10 @@ impl StreamSource for YouTubeSource {
     fn total_bytes(&self) -> Option<u64> {
         let n = self.total_content_bytes.load(std::sync::atomic::Ordering::Relaxed);
         if n > 0 { Some(n) } else { None }
+    }
+
+    fn duration_ms(&self) -> Option<u64> {
+        Some(self.duration_ms)
     }
 }
 
@@ -550,6 +556,8 @@ mod tests {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: "test".into(),
                 title: None,
+                artist: None,
+                album: None,
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
@@ -569,6 +577,8 @@ mod tests {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: "test".into(),
                 title: None,
+                artist: None,
+                album: None,
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
@@ -589,6 +599,8 @@ mod tests {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: "test".into(),
                 title: None,
+                artist: None,
+                album: None,
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
@@ -610,6 +622,8 @@ mod tests {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: "test".into(),
                 title: None,
+                artist: None,
+                album: None,
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),
@@ -631,6 +645,8 @@ mod tests {
                 stream_type: StreamType::Seekable { total_bytes: 0 },
                 uri: "test".into(),
                 title: None,
+                artist: None,
+                album: None,
             },
             client: Arc::new(crate::audio::engine::types::HttpClient::default()),
             audio_url: "http://example.com".into(),

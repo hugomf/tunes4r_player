@@ -94,6 +94,11 @@ pub struct PlaybackEngine {
     /// min(elapsed_since_start_ms, cache_max_ms)` so the live buffer bar
     /// fills up progressively (rather than showing 100% instantly).
     pub(crate) live_start_time: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+
+    /// Seek request for in-thread seeking. The decode thread's `playback_loop`
+    /// checks this after each packet. A non-zero value means "seek to this
+    /// millisecond position". The thread clears it back to 0 after processing.
+    pub(crate) seek_request: Arc<AtomicU64>,
 }
 
 impl PlaybackEngine {

@@ -16,8 +16,10 @@ export 'src/models.dart'
         PlaybackState,
         EngineConfig,
         EngineEvent,
+        EngineEventType,
         AdaptiveRingBuffer,
         Tunes4rInitException,
         Tunes4rEngineException,
-        Tunes4rLoadException;
+        Tunes4rLoadException,
+        Tunes4rErrorCode;
 export 'src/audio_engine.dart' show AudioEngine;

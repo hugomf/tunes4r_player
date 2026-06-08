@@ -6,7 +6,7 @@
 
 use crate::audio::error::PlaybackError;
 use crate::audio::stream::pipe::new_pipe;
-use crate::audio::stream::source::{Capability, SourceInfo, StreamSource};
+use crate::audio::stream::source::{Capability, ReadSeek, SourceInfo, StreamSource};
 use parking_lot::Mutex;
 use std::io::Read;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ impl StreamSource for RetryDecorator {
     fn open(
         &self,
         seek_to: Option<u64>,
-    ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
         let initial = self.inner.lock().open(seek_to)?;
 
         let inner = self.inner.clone();
@@ -68,7 +68,7 @@ impl StreamSource for RetryDecorator {
         thread::Builder::new()
             .name("retry-prefetch".into())
             .spawn(move || {
-                let mut current: Box<dyn Read + Send + Sync + 'static> = initial;
+                let mut current: Box<dyn ReadSeek + Send + Sync + 'static> = initial;
                 let mut attempts: u32 = 0;
                 let mut buf = [0u8; 8192];
 
@@ -135,6 +135,7 @@ impl StreamSource for RetryDecorator {
 mod tests {
     use super::*;
     use crate::audio::stream::source::SourceKind;
+    use std::io::{Seek, SeekFrom};
 
     struct FickleSource {
         fail_every: usize,
@@ -154,6 +155,8 @@ mod tests {
                     },
                     uri: "test://fickle".into(),
                     title: None,
+                    artist: None,
+                    album: None,
                 },
             }
         }
@@ -172,7 +175,7 @@ mod tests {
         fn open(
             &self,
             _seek_to: Option<u64>,
-        ) -> Result<Box<dyn Read + Send + Sync + 'static>, PlaybackError> {
+    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
             let data = self.data.clone();
             let fail_every = self.fail_every;
             Ok(Box::new(FickleReader {
@@ -205,6 +208,15 @@ mod tests {
             buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
             self.pos += n;
             Ok(n)
+        }
+    }
+
+    impl Seek for FickleReader {
+        fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "fickle reader is not seekable",
+            ))
         }
     }
 

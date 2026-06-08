@@ -83,7 +83,7 @@ fn cstr(s: &str) -> CString {
 /// bookkeeping, not the decoder. The file just needs to be openable so
 /// `play_pipeline` advances past the `Connecting` state.
 fn write_dummy_audio_file(path: &PathBuf) {
-    // Minimal valid MPEG-1 Layer III frame header for a 1-second silent
+    // Minimal MPEG-1 Layer III frame header for a 1-second silent
     // frame at 44.1kHz/128kbps stereo. 144 bytes per frame * 38 frames
     // ≈ 1 second. This is enough for the file-size / duration math to
     // produce a non-zero total so the seek clamp can be tested.
@@ -385,21 +385,22 @@ fn can_seek_handles_empty_and_null_engine() {
 fn log_buffer_captures_emitted_messages() {
     audio_engine_clear_logs();
 
-    // Emit one error so we have something to look for. The log
-    // macro is gated on the static logger being initialized; we
-    // rely on the engine create path having run that already.
-    log::error!("[test] canary message for log buffer test");
+    // Create an engine first so init_logger() sets up the tracing subscriber
+    // and the LogTracer bridge (otherwise tracing::error! would be a no-op).
+    let engine = audio_engine_create();
+    assert!(!engine.is_null(), "audio_engine_create returned null");
+
+    // Emit one error so we have something to look for.
+    tracing::error!("[test] canary message for log buffer test");
 
     // Read into a 4KB buffer. If the buffer is too small, the
     // function returns -1 and writes nothing — that's still
     // safe behavior. Otherwise it returns the byte count.
-    let mut buf = [0u8 as c_char; 4096];
+    let mut buf = [0i8 as c_char; 4096];
     let n = audio_engine_get_logs(buf.as_mut_ptr(), buf.len());
     assert!(n >= 0, "log buffer should not return -1 for 4KB output");
 
     if n > 0 {
-        // Read back as a UTF-8 string. Skip the null terminator at
-        // the end (the FFI null-terminates the output).
         let bytes: Vec<u8> = buf[..n as usize].iter().map(|&b| b as u8).collect();
         let s = std::str::from_utf8(&bytes).expect("log buffer must be UTF-8");
         assert!(
@@ -408,11 +409,8 @@ fn log_buffer_captures_emitted_messages() {
             s
         );
     } else {
-        // The log macro may not have routed through our StderrLogger
-        // in this test process (the engine was created in the same
-        // process, so it should have — but if a previous test
-        // registered a different logger, the message may have gone
-        // elsewhere). This is a soft check, not a hard failure.
         eprintln!("[note] log buffer is empty; canary may have gone to a different sink");
     }
+
+    unsafe { audio_engine_destroy(engine); }
 }

@@ -36,9 +36,36 @@ class Tunes4rInitException implements Exception {
 
 class Tunes4rEngineException implements Exception {
   final String message;
-  const Tunes4rEngineException(this.message);
+  final int? errorCode;
+  const Tunes4rEngineException(this.message, {this.errorCode});
   @override
-  String toString() => 'Tunes4rEngineException: $message';
+  String toString() => errorCode != null
+      ? 'Tunes4rEngineException: $message (code: $errorCode)'
+      : 'Tunes4rEngineException: $message';
+}
+
+/// FFI error codes returned by native engine functions.
+extension Tunes4rErrorCode on int {
+  static const int ffiSuccess = 0;
+  static const int ffiNullHandleOrUri = -1;
+  static const int ffiInvalidUtf8 = -2;
+  static const int ffiEngineLockError = -3;
+  static const int ffiPlaybackError = -4;
+  static const int ffiInternalPanic = -99;
+
+  bool get isFfiError => this != 0;
+
+  String get ffiErrorMessage {
+    return switch (this) {
+      ffiSuccess => 'Success',
+      ffiNullHandleOrUri => 'Null handle or URI',
+      ffiInvalidUtf8 => 'Invalid UTF-8 string',
+      ffiEngineLockError => 'Engine lock error',
+      ffiPlaybackError => 'Playback error',
+      ffiInternalPanic => 'Internal panic in native engine',
+      _ => 'Unknown FFI error (code: $this)',
+    };
+  }
 }
 
 class Tunes4rLoadException implements Exception {
@@ -48,11 +75,33 @@ class Tunes4rLoadException implements Exception {
   String toString() => 'Tunes4rLoadException: $message';
 }
 
+/// Typed event type mirroring the `engineEvent*` constants from
+/// [Tunes4rFFI]. Use [fromValue] to convert from a raw FFI int.
+enum EngineEventType {
+  none(0),
+  stateChanged(1),
+  seekStarted(2),
+  seekCompleted(3),
+  endOfStream(4),
+  positionReset(5),
+  error(6),
+  seekQueued(7);
+
+  final int value;
+  const EngineEventType(this.value);
+
+  static EngineEventType fromValue(int v) =>
+      EngineEventType.values.firstWhere(
+        (t) => t.value == v,
+        orElse: () => none,
+      );
+}
+
 /// Engine event mirroring Rust's `EngineEvent` FFI struct. Emitted on
 /// [AudioEngine.playbackEventStream].
 class EngineEvent {
-  /// One of the `engineEvent*` constants declared in `tunes4r_player_ffi.dart`.
-  final int eventType;
+  /// Typed event type. Raw int values match the `engineEvent*` constants.
+  final EngineEventType eventType;
   final int intParam;
 
   const EngineEvent({required this.eventType, required this.intParam});

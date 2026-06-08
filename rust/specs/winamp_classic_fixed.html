@@ -1,0 +1,257 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.wa{width:540px;font-family:'Courier New',monospace;user-select:none;margin:0 auto}
+.tbar{height:22px;background:linear-gradient(to bottom,#5a5a7a,#3a3a5a 40%,#2a2a4a 60%,#1e1e3a);border:1px solid #6a6a9a;border-bottom:none;border-radius:4px 4px 0 0;display:flex;align-items:center;padding:0 6px;gap:5px;position:relative;overflow:hidden}
+.tbar-grip{position:absolute;left:26px;right:90px;top:4px;height:3px;background:repeating-linear-gradient(to right,#4a4a7a 0 2px,transparent 2px 4px);opacity:.4;pointer-events:none}
+.tbar-title{flex:1;text-align:center;font:bold 11px 'Arial Narrow',Arial,sans-serif;color:#c8c8d8;letter-spacing:3px;text-transform:uppercase;text-shadow:0 1px 0 #000;position:relative;z-index:1}
+.tbar-logo{width:14px;height:14px;flex-shrink:0}
+.tbtn{width:16px;height:12px;border:1px solid #888;background:linear-gradient(to bottom,#bbb,#888);border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:7px;color:#333;flex-shrink:0}
+.tbtn:hover{background:linear-gradient(to bottom,#ddd,#aaa)}
+.tbtn.cl{background:linear-gradient(to bottom,#cc6655,#882233);color:#fff}
+.mbody{background:linear-gradient(to bottom,#3a3a5a,#454565 20%,#505075 50%,#454565 80%,#3a3a5a);border:1px solid #6a6aaa;border-top:1px solid #4a4a8a;padding:6px 8px 8px;display:flex;flex-direction:column;gap:6px}
+.top-row{display:flex;gap:6px;height:120px}
+/* LCD */
+.lcd{width:190px;height:120px;background:#0d1a0d;border:1px solid #2a4a2a;border-radius:6px;position:relative;flex-shrink:0;overflow:hidden}
+.lcd::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle,#152515 .7px,transparent .7px);background-size:4px 4px;pointer-events:none;z-index:10;opacity:.6}
+.sidebar{position:absolute;left:5px;top:6px;bottom:6px;width:12px;display:flex;flex-direction:column;justify-content:space-around;align-items:center;z-index:20}
+.sidebar span{font-size:9px;color:#39ff14;font-family:monospace;line-height:1;text-shadow:0 0 4px #39ff1488}
+.ctrls{position:absolute;left:18px;top:6px;display:flex;align-items:center;gap:3px;z-index:20}
+.ptri{width:0;height:0;border-top:11px solid transparent;border-bottom:11px solid transparent;border-left:19px solid #39ff14;filter:drop-shadow(0 0 3px #39ff1488)}
+.timer{position:absolute;top:5px;left:50px;right:5px;height:44px;z-index:20;display:flex;align-items:center;gap:2px}
+.dg{position:relative;width:22px;height:43px;flex-shrink:0}
+.sg{position:absolute;border-radius:2px}
+.sg.on{background:#39ff14;box-shadow:0 0 4px #39ff1466}
+.sg.off{background:#1a2e1a}
+.colon{display:flex;flex-direction:column;justify-content:space-around;height:26px;margin-top:8px}
+.colon span{display:block;width:4px;height:4px;background:#39ff14;border-radius:50%;box-shadow:0 0 3px #39ff14aa}
+/* Spectrum */
+.spzone{position:absolute;left:18px;right:5px;top:52px;bottom:5px;z-index:15;overflow:hidden}
+.rleft{position:absolute;left:0;top:0;bottom:0;width:3px}
+.rbot{position:absolute;bottom:0;left:0;right:0;height:3px}
+.rdot{position:absolute;width:3px;height:3px;border-radius:.5px}
+.barswrap{position:absolute;left:5px;right:0;top:0;bottom:5px;display:flex;align-items:flex-end;gap:2px;overflow:hidden}
+.bwrap{flex:1;min-width:4px;max-width:12px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;position:relative}
+.bar{width:100%;border-radius:1px;position:relative}
+.pk{position:absolute;width:100%;height:2px;background:#fff;border-radius:1px}
+/* Meta panel */
+.meta{flex:1;display:flex;flex-direction:column;gap:4px;height:120px;min-width:0;overflow:hidden}
+.titledis{background:#0a120a;border:1px solid #1a3a1a;border-radius:3px;height:28px;overflow:hidden;flex-shrink:0}
+.tscroll{display:flex;align-items:center;height:100%;white-space:nowrap;animation:scr 12s linear infinite;padding-left:100%}
+.ttext{font-family:'Courier New',monospace;font-size:12px;color:#39ff14;text-shadow:0 0 6px #39ff1466;padding-right:60px}
+@keyframes scr{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.irow{display:flex;align-items:center;gap:6px;height:20px;flex-shrink:0}
+.ibadge{background:#0a1a0a;border:1px solid #1a4a1a;border-radius:2px;padding:1px 4px;font-family:'Courier New',monospace;font-size:11px;color:#39ff14;text-shadow:0 0 3px #39ff1455}
+.ilabel{font-family:'Courier New',monospace;font-size:10px;color:#667766}
+.istereo{font-family:'Courier New',monospace;font-size:10px;color:#39ff14;text-shadow:0 0 4px #39ff1455}
+.imono{font-family:'Courier New',monospace;font-size:10px;color:#2a4a2a}
+/* Sliders row — full contained */
+.slrow{display:flex;align-items:center;gap:6px;height:20px;flex-shrink:0;width:100%;overflow:hidden}
+.slunit{display:flex;align-items:center;gap:4px;overflow:hidden}
+.slunit.vol{flex:1;min-width:0}
+.slunit.bal{flex:0 0 90px}
+.sllabel{font-size:9px;color:#667766;font-family:monospace;flex-shrink:0}
+/* Track wrapper: clips the thumb so it never exits */
+.trk-outer{flex:1;min-width:0;position:relative;height:14px;overflow:hidden}
+.trk{position:absolute;left:7px;right:7px;top:50%;transform:translateY(-50%);height:6px;background:#1a2a1a;border:1px solid #2a4a2a;border-radius:3px}
+.trk-fill{height:100%;border-radius:3px 0 0 3px;position:absolute;left:0;top:0;pointer-events:none}
+.thumb{position:absolute;width:14px;height:14px;top:50%;transform:translate(-50%,-50%);background:linear-gradient(to bottom,#c0c0d0,#787890 50%,#505060);border:1px solid #999;border-radius:2px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.6);z-index:2}
+.thumb::after{content:'';display:block;width:2px;height:8px;background:linear-gradient(to bottom,#eee,#aaa);position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:1px}
+.eqpl{display:flex;gap:4px;flex-shrink:0}
+.eqbtn{background:linear-gradient(to bottom,#555577,#333355);border:1px solid #7777aa;border-radius:2px;padding:1px 5px;font-family:'Courier New',monospace;font-size:9px;color:#aaaaff;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:2px}
+.eqbtn::before{content:'▶';font-size:7px;color:#39ff14}
+.eqbtn:hover{background:linear-gradient(to bottom,#7777aa,#555588)}
+/* Seek bar — fully contained */
+.seekrow{flex-shrink:0;height:16px;position:relative;overflow:hidden}
+.seek-outer{position:absolute;left:7px;right:7px;top:50%;transform:translateY(-50%);height:10px;background:#111822;border:1px solid #2a3a4a;border-radius:2px;cursor:pointer}
+.seek-fill{height:100%;background:linear-gradient(to right,#554400,#aa8800,#ffcc00);border-radius:2px 0 0 2px;position:absolute;left:0;top:0;pointer-events:none}
+.seek-thumb{position:absolute;width:22px;height:14px;top:50%;transform:translate(-50%,-50%);background:linear-gradient(to bottom,#c0c0c8,#888890 60%,#505058);border:1px solid #999;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.5);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:7px;color:#555;letter-spacing:-1px}
+/* Controls bar */
+.cbar{background:linear-gradient(to bottom,#4a4a6a,#505070 30%,#484868 70%,#3c3c5c);border:1px solid #6a6a9a;border-top:1px solid #3a3a5a;border-bottom:1px solid #2a2a4a;padding:5px 8px;display:flex;align-items:center;gap:5px}
+.cbtn{height:28px;border-radius:3px;border:1px solid #8888bb;cursor:pointer;display:flex;align-items:center;justify-content:center;background:linear-gradient(to bottom,#888899,#6a6a7a 30%,#585868 70%,#484858);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 2px 3px rgba(0,0,0,.4);transition:all .05s;flex-shrink:0}
+.cbtn:hover{background:linear-gradient(to bottom,#aaaacc,#8888aa 30%,#7070aa 70%,#5c5c8a);border-color:#aaaadd}
+.cbtn:active{background:linear-gradient(to bottom,#484858,#585868 70%,#6a6a7a);box-shadow:inset 0 2px 3px rgba(0,0,0,.5);transform:translateY(1px)}
+.bprev,.bnext,.bpause,.bstop{width:28px}
+.bplay{width:32px}
+.bej{width:28px;margin-left:3px}
+.cspc{flex:1}
+.togbtn{height:22px;padding:0 8px;border-radius:3px;border:1px solid #7777aa;cursor:pointer;font-family:'Courier New',monospace;font-size:9px;font-weight:bold;color:#bbbbdd;display:flex;align-items:center;gap:3px;background:linear-gradient(to bottom,#555577,#3a3a5a);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 1px 2px rgba(0,0,0,.4);flex-shrink:0}
+.togbtn:hover{background:linear-gradient(to bottom,#7777aa,#555588);color:#fff}
+.led{width:7px;height:7px;border-radius:1px}
+.led.on{background:#39ff14;box-shadow:0 0 4px #39ff14aa}
+.led.off{background:#555}
+.walogo{width:34px;height:34px;cursor:pointer;opacity:.85;flex-shrink:0}
+.walogo:hover{opacity:1}
+.bstrip{height:8px;background:linear-gradient(to bottom,#2a2a4a,#1e1e38);border:1px solid #5a5a8a;border-top:none;border-radius:0 0 4px 4px}
+</style>
+
+<div class="wa">
+  <!-- Title bar -->
+  <div class="tbar">
+    <svg class="tbar-logo" viewBox="0 0 14 14"><ellipse cx="7" cy="9" rx="5" ry="4" fill="#886600"/><ellipse cx="7" cy="9" rx="4" ry="3" fill="#cc9900"/><path d="M4,4 Q7,0 10,4" stroke="#cc9900" stroke-width="1.5" fill="none"/><path d="M5,2.5 Q7,0 9,2.5" stroke="#ffcc44" stroke-width="1" fill="none"/></svg>
+    <div class="tbar-grip"></div>
+    <div class="tbar-title">WINAMP</div>
+    <div class="tbtn">_</div>
+    <div class="tbtn">□</div>
+    <div class="tbtn cl">×</div>
+  </div>
+
+  <!-- Main body -->
+  <div class="mbody">
+    <div class="top-row">
+      <!-- LCD -->
+      <div class="lcd">
+        <div class="sidebar" id="sb"><span>C</span><span>O</span><span>R</span><span>T</span><span>O</span><span>C</span></div>
+        <div class="ctrls"><div class="ptri"></div></div>
+        <div class="timer" id="timer"></div>
+        <div class="spzone" id="spzone">
+          <div class="rleft" id="rleft"></div>
+          <div class="rbot" id="rbot"></div>
+          <div class="barswrap" id="bars"></div>
+        </div>
+      </div>
+
+      <!-- Meta -->
+      <div class="meta">
+        <div class="titledis"><div class="tscroll"><span class="ttext">28. Michael Jackson - Smooth Criminal &nbsp;&nbsp;&nbsp;&nbsp; 28. Michael Jackson - Smooth Criminal &nbsp;&nbsp;&nbsp;&nbsp;</span></div></div>
+        <div class="irow">
+          <span class="ibadge">256</span><span class="ilabel">kbps</span>
+          <span class="ibadge">44</span><span class="ilabel">kHz</span>
+          <span style="flex:1"></span>
+          <span class="imono">mono</span>
+          <span style="color:#334433;font-size:10px;font-family:monospace;margin:0 2px">|</span>
+          <span class="istereo">stereo</span>
+        </div>
+
+        <!-- Sliders row — all fully contained -->
+        <div class="slrow">
+          <div class="slunit vol">
+            <span class="sllabel">VOL</span>
+            <div class="trk-outer" id="volOuter">
+              <div class="trk" id="volTrack">
+                <div class="trk-fill" id="volFill"></div>
+                <div class="thumb" id="volThumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="slunit bal">
+            <span class="sllabel">BAL</span>
+            <div class="trk-outer" id="balOuter">
+              <div class="trk" id="balTrack">
+                <div class="trk-fill" id="balFill" style="background:#1a6a1a"></div>
+                <div class="thumb" id="balThumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="eqpl">
+            <div class="eqbtn">EQ</div>
+            <div class="eqbtn">PL</div>
+          </div>
+        </div>
+
+        <!-- Seek bar — fully contained -->
+        <div class="seekrow" id="seekRow">
+          <div class="seek-outer" id="seekOuter">
+            <div class="seek-fill" id="seekFill"></div>
+            <div class="seek-thumb" id="seekThumb">|||</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls bar -->
+    <div class="cbar">
+      <div class="cbtn bprev" title="Previous"><svg width="16" height="14" viewBox="0 0 16 14"><rect x="0" y="1" width="3" height="12" fill="#dddde8"/><polygon points="14,1 14,13 4,7" fill="#dddde8"/></svg></div>
+      <div class="cbtn bplay" title="Play"><svg width="14" height="14" viewBox="0 0 14 14"><polygon points="1,1 13,7 1,13" fill="#39ff14" filter="drop-shadow(0 0 2px #39ff1466)"/></svg></div>
+      <div class="cbtn bpause" title="Pause"><svg width="13" height="14" viewBox="0 0 13 14"><rect x="1" y="1" width="4" height="12" fill="#dddde8"/><rect x="8" y="1" width="4" height="12" fill="#dddde8"/></svg></div>
+      <div class="cbtn bstop" title="Stop"><svg width="14" height="14" viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" fill="#dddde8"/></svg></div>
+      <div class="cbtn bnext" title="Next"><svg width="16" height="14" viewBox="0 0 16 14"><polygon points="2,1 12,7 2,13" fill="#dddde8"/><rect x="13" y="1" width="3" height="12" fill="#dddde8"/></svg></div>
+      <div class="cbtn bej" title="Open"><svg width="16" height="14" viewBox="0 0 16 14"><polygon points="8,1 15,9 1,9" fill="#dddde8"/><rect x="1" y="11" width="14" height="3" fill="#dddde8"/></svg></div>
+      <div class="cspc"></div>
+      <div class="togbtn"><div class="led on"></div>SHUFFLE</div>
+      <div class="togbtn"><div class="led off"></div>REPEAT</div>
+      <svg class="walogo" viewBox="0 0 34 34"><ellipse cx="17" cy="22" rx="12" ry="9" fill="#774400"/><ellipse cx="17" cy="22" rx="10" ry="7" fill="#cc8800"/><ellipse cx="17" cy="22" rx="7" ry="5" fill="#ffbb00"/><path d="M10,11 Q17,3 24,11" stroke="#cc8800" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M12,8 Q17,2 22,8" stroke="#ffcc44" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    </div>
+  </div>
+  <div class="bstrip"></div>
+</div>
+
+<script>
+const SEGS={0:[1,1,1,0,1,1,1],1:[0,0,1,0,0,1,0],2:[1,0,1,1,1,0,1],3:[1,0,1,1,0,1,1],4:[0,1,1,1,0,1,0],5:[1,1,0,1,0,1,1],6:[1,1,0,1,1,1,1],7:[1,0,1,0,0,1,0],8:[1,1,1,1,1,1,1],9:[1,1,1,1,0,1,1]};
+const SPOS=['top:0;left:3px;width:14px;height:5px','top:3px;left:0;width:5px;height:13px','top:3px;right:0;width:5px;height:13px','top:19px;left:3px;width:14px;height:5px','top:22px;left:0;width:5px;height:13px','top:22px;right:0;width:5px;height:13px','top:38px;left:3px;width:14px;height:5px'];
+function digit(n){const s=SEGS[n]||SEGS[0];return '<div class="dg">'+SPOS.map((p,i)=>`<div class="sg ${s[i]?'on':'off'}" style="position:absolute;border-radius:2px;${p}"></div>`).join('')+'</div>';}
+function renderTimer(t){const m=Math.floor(t/60),s=t%60;document.getElementById('timer').innerHTML=digit(Math.floor(m/10))+digit(m%10)+'<div class="colon"><span></span><span></span></div>'+digit(Math.floor(s/10))+digit(s%10);}
+
+function makeDots(el,vertical,len){el.innerHTML='';for(let i=0,pos=0;pos<len;i++,pos+=7){const d=document.createElement('div');d.className='rdot';d.style.background=i%2===0?'#00aaaa':'#008888';if(vertical){d.style.top=pos+'px';d.style.left='0';}else{d.style.left=pos+'px';d.style.bottom='0';}el.appendChild(d);}}
+
+const N=32,ZONES=[[0,.2,'#00cc00'],[.2,.45,'#88cc00'],[.45,.65,'#ffaa00'],[.65,.82,'#dd6600'],[.82,1,'#cc3300']];
+let amps=new Array(N).fill(0),peaks=new Array(N).fill(0),ptimers=new Array(N).fill(0),targets=new Array(N).fill(0),maxH=0;
+
+function genTargets(){return Array.from({length:N},(_,i)=>{const x=i/N;const v=.3+.45*Math.exp(-Math.pow(x-.15,2)/.04)+.25*Math.exp(-Math.pow(x-.55,2)/.06)+.15*Math.exp(-Math.pow(x-.85,2)/.03);return Math.min(1,v*(.7+.6*Math.random()));});}
+
+function barGrad(h,mh){if(!h)return'transparent';const stops=[];[...ZONES].reverse().forEach(([lo,hi,c])=>{const zT=hi*mh,zB=lo*mh;if(h<zB)return;const p1=Math.max(0,(mh-Math.min(h,zT))/mh*100).toFixed(1);const p2=Math.max(0,(mh-zB)/mh*100).toFixed(1);stops.push(`${c} ${p1}%`,`${c} ${p2}%`);});return stops.length?`linear-gradient(to bottom,${stops.join(',')})`:ZONES[0][2];}
+
+let lastT=Date.now();
+function anim(){const now=Date.now();if(now-lastT>180+Math.random()*120){targets=genTargets();lastT=now;}for(let i=0;i<N;i++){const spd=amps[i]<targets[i]?.18:.07;amps[i]+=(targets[i]-amps[i])*spd;const h=Math.round(amps[i]*maxH);const b=document.getElementById('b'+i);if(b){b.style.height=h+'px';b.style.background=barGrad(h,maxH);}if(h>peaks[i]){peaks[i]=h;ptimers[i]=60;}else{if(ptimers[i]>0)ptimers[i]--;else peaks[i]=Math.max(0,peaks[i]-1.2);}const p=document.getElementById('pk'+i);if(p){if(peaks[i]>2){p.style.bottom=(peaks[i]+3)+'px';p.style.opacity='1';}else p.style.opacity='0';}}requestAnimationFrame(anim);}
+
+function buildBars(){const c=document.getElementById('bars');const sp=document.getElementById('spzone');maxH=sp.offsetHeight-5;c.innerHTML='';for(let i=0;i<N;i++){const w=document.createElement('div');w.className='bwrap';const pk=document.createElement('div');pk.className='pk';pk.id='pk'+i;pk.style.cssText='bottom:0;opacity:0;position:absolute';const b=document.createElement('div');b.className='bar';b.id='b'+i;b.style.height='0';w.append(pk,b);c.appendChild(w);}}
+
+function initRules(){const z=document.getElementById('spzone');makeDots(document.getElementById('rleft'),true,z.offsetHeight);makeDots(document.getElementById('rbot'),false,z.offsetWidth);}
+
+/* SLIDER LOGIC — thumb clamped within track, never outside */
+function initSlider(outerEl,fillEl,thumbEl,initVal,onUpdate){
+  let val=initVal;
+  function getTrackRect(){return outerEl.querySelector('.trk').getBoundingClientRect();}
+  function setVal(v){val=Math.max(0,Math.min(1,v));const pct=(val*100).toFixed(2)+'%';fillEl.style.width=pct;thumbEl.style.left=pct;onUpdate(val);}
+  setVal(val);
+  let drag=false;
+  thumbEl.addEventListener('mousedown',e=>{drag=true;e.preventDefault();e.stopPropagation();});
+  outerEl.addEventListener('click',e=>{const r=getTrackRect();setVal((e.clientX-r.left)/r.width);});
+  document.addEventListener('mousemove',e=>{if(!drag)return;const r=getTrackRect();setVal((e.clientX-r.left)/r.width);});
+  document.addEventListener('mouseup',()=>{drag=false;});
+}
+
+function volColor(v){
+  if(v<.5){const t=v/.5;const r=Math.round(255),g=Math.round(204-44*t),b=0;return`rgb(${r},${g},${b})`;}
+  else{const t=(v-.5)/.5;const r=Math.round(255-55*t),g=Math.round(160-160*t),b=0;return`rgb(${r},${g},${b})`;}
+}
+
+let secs=122;
+function tick(){secs++;if(secs>999)secs=0;renderTimer(secs);}
+
+window.addEventListener('load',()=>{
+  renderTimer(secs);
+  setTimeout(()=>{
+    initRules();
+    buildBars();
+    requestAnimationFrame(anim);
+  },60);
+  setInterval(tick,1000);
+
+  initSlider(
+    document.getElementById('volOuter'),
+    document.getElementById('volFill'),
+    document.getElementById('volThumb'),
+    0.72,
+    v=>{document.getElementById('volFill').style.background=volColor(v);}
+  );
+  initSlider(
+    document.getElementById('balOuter'),
+    document.getElementById('balFill'),
+    document.getElementById('balThumb'),
+    0.5,
+    ()=>{}
+  );
+
+  /* Seek bar */
+  const sOuter=document.getElementById('seekOuter');
+  const sFill=document.getElementById('seekFill');
+  const sThumb=document.getElementById('seekThumb');
+  let sVal=.35,sDrag=false;
+  function setSeek(v){sVal=Math.max(0,Math.min(1,v));const pct=(sVal*100).toFixed(2)+'%';sFill.style.width=pct;sThumb.style.left=pct;}
+  setSeek(sVal);
+  sThumb.addEventListener('mousedown',e=>{sDrag=true;e.preventDefault();e.stopPropagation();});
+  sOuter.addEventListener('click',e=>{const r=sOuter.getBoundingClientRect();setSeek((e.clientX-r.left)/r.width);});
+  document.addEventListener('mousemove',e=>{if(!sDrag)return;const r=sOuter.getBoundingClientRect();setSeek((e.clientX-r.left)/r.width);});
+  document.addEventListener('mouseup',()=>{sDrag=false;});
+});
+</script>

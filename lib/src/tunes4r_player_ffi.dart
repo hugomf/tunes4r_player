@@ -25,16 +25,6 @@ typedef _EngineCanSeekDart = bool Function(Pointer<Void>);
 typedef _EngineCanDownloadNative = Bool Function(Pointer<Void>);
 typedef _EngineCanDownloadDart = bool Function(Pointer<Void>);
 
-typedef _EnginePlayStreamFromBytesNative =
-    Int32 Function(Pointer<Void>, Pointer<Utf8>);
-typedef _EnginePlayStreamFromBytesDart =
-    int Function(Pointer<Void>, Pointer<Utf8>);
-
-typedef _EngineFetchAndPipeNative =
-    Int32 Function(Pointer<Void>, Pointer<Utf8>);
-typedef _EngineFetchAndPipeDart =
-    int Function(Pointer<Void>, Pointer<Utf8>);
-
 typedef _EnginePushAudioBytesNative =
     Void Function(Pointer<Void>, Pointer<Uint8>, Int32);
 typedef _EnginePushAudioBytesDart =
@@ -42,11 +32,6 @@ typedef _EnginePushAudioBytesDart =
 
 typedef _EngineEndAudioStreamNative = Void Function(Pointer<Void>);
 typedef _EngineEndAudioStreamDart = void Function(Pointer<Void>);
-
-typedef _EngineSetStreamErrorNative =
-    Void Function(Pointer<Void>, Pointer<Utf8>);
-typedef _EngineSetStreamErrorDart =
-    void Function(Pointer<Void>, Pointer<Utf8>);
 
 typedef _EnginePauseNative = Void Function(Pointer<Void>);
 typedef _EnginePauseDart = void Function(Pointer<Void>);
@@ -155,63 +140,20 @@ typedef _EngineGetChannelsDart = int Function(Pointer<Void>);
 typedef _EngineGetLoadErrorNative = Pointer<Utf8> Function(Pointer<Void>);
 typedef _EngineGetLoadErrorDart = Pointer<Utf8> Function(Pointer<Void>);
 
-typedef _EngineGetLastErrorNative = Pointer<Utf8> Function(Pointer<Void>);
-typedef _EngineGetLastErrorDart = Pointer<Utf8> Function(Pointer<Void>);
-
-typedef _EngineGetPipeSeekOffsetNative = Int64 Function(Pointer<Void>);
-typedef _EngineGetPipeSeekOffsetDart = int Function(Pointer<Void>);
-
-typedef _EnginePollPipeSeekByteOffsetNative = Int64 Function(Pointer<Void>);
-typedef _EnginePollPipeSeekByteOffsetDart = int Function(Pointer<Void>);
-
-typedef _EngineClearPipeSeekRequestNative = Void Function(Pointer<Void>);
-typedef _EngineClearPipeSeekRequestDart = void Function(Pointer<Void>);
-
-typedef _EngineSetPipeTotalBytesNative =
-    Void Function(Pointer<Void>, Uint64);
-typedef _EngineSetPipeTotalBytesDart =
-    void Function(Pointer<Void>, int);
-
-typedef _YoutubeServiceCreateNative = Pointer<Void> Function();
-typedef _YoutubeServiceCreateDart = Pointer<Void> Function();
-
-typedef _YoutubeServiceDestroyNative = Void Function(Pointer<Void>);
-typedef _YoutubeServiceDestroyDart = void Function(Pointer<Void>);
-
 typedef _YoutubeGetStreamUrlNative =
-    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
+    Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _YoutubeGetStreamUrlDart =
-    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
-
-typedef _YoutubeSearchNative =
-    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, Int32);
-typedef _YoutubeSearchDart =
-    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, int);
-
-typedef _YoutubeGetVideoInfoNative =
-    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
-typedef _YoutubeGetVideoInfoDart =
-    Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>);
+    Pointer<Utf8> Function(Pointer<Utf8>);
 
 typedef _EnginePlayYoutubeNative =
-    Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
-typedef _EnginePlayYoutubeDart =
-    int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
-
-typedef _EnginePlayStreamWithDownloaderNative =
     Int32 Function(Pointer<Void>, Pointer<Utf8>);
-typedef _EnginePlayStreamWithDownloaderDart =
+typedef _EnginePlayYoutubeDart =
     int Function(Pointer<Void>, Pointer<Utf8>);
 
 typedef _EnginePlayLiveNative =
     Int32 Function(Pointer<Void>, Pointer<Utf8>, Uint64);
 typedef _EnginePlayLiveDart =
     int Function(Pointer<Void>, Pointer<Utf8>, int);
-
-typedef _YoutubeDownloadAudioNative =
-    Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
-typedef _YoutubeDownloadAudioDart =
-    int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>);
 
 // ---------------------------------------------------------------------------
 // Low-level FFI wrapper
@@ -230,11 +172,8 @@ class Tunes4rFFI {
   late _EnginePlayDart _play;
   late _EngineCanSeekDart _canSeek;
   late _EngineCanDownloadDart _canDownload;
-  late _EnginePlayStreamFromBytesDart _playStreamFromBytes;
-  late _EngineFetchAndPipeDart _fetchAndPipe;
   late _EnginePushAudioBytesDart _pushAudioBytes;
   late _EngineEndAudioStreamDart _endAudioStream;
-  late _EngineSetStreamErrorDart _setStreamError;
   late _EnginePauseDart _pause;
   late _EngineResumeDart _resume;
   late _EngineStopDart _stop;
@@ -255,20 +194,9 @@ class Tunes4rFFI {
   late _EngineGetSampleRateDart _getSampleRate;
   late _EngineGetChannelsDart _getChannels;
   late _EngineGetLoadErrorDart _getLoadError;
-  late _EngineGetLastErrorDart _getLastError;
-  late _EngineGetPipeSeekOffsetDart _getPipeSeekOffset;
-  late _EnginePollPipeSeekByteOffsetDart _pollPipeSeekByteOffset;
-  late _EngineClearPipeSeekRequestDart _clearPipeSeekRequest;
-  late _EngineSetPipeTotalBytesDart _setPipeTotalBytes;
-  late _YoutubeServiceCreateDart _youtubeServiceCreate;
-  late _YoutubeServiceDestroyDart _youtubeServiceDestroy;
   late _YoutubeGetStreamUrlDart _youtubeGetStreamUrl;
-  late _YoutubeSearchDart _youtubeSearch;
-  late _YoutubeGetVideoInfoDart _youtubeGetVideoInfo;
   late _EnginePlayYoutubeDart _playYoutube;
-  late _EnginePlayStreamWithDownloaderDart _playStreamWithDownloader;
   late _EnginePlayLiveDart _playLive;
-  late _YoutubeDownloadAudioDart _youtubeDownloadAudio;
 
   String? get initError => _initError;
   bool get isInitialized => _isInitialized;
@@ -379,21 +307,11 @@ class Tunes4rFFI {
     _canDownload = l.lookup<NativeFunction<_EngineCanDownloadNative>>(
       'audio_engine_can_download',
     ).asFunction();
-    _playStreamFromBytes =
-        l.lookup<NativeFunction<_EnginePlayStreamFromBytesNative>>(
-          'audio_engine_play_stream_from_bytes',
-        ).asFunction();
-    _fetchAndPipe = l.lookup<NativeFunction<_EngineFetchAndPipeNative>>(
-      'audio_engine_fetch_and_pipe',
-    ).asFunction();
     _pushAudioBytes = l.lookup<NativeFunction<_EnginePushAudioBytesNative>>(
       'audio_engine_push_audio_bytes',
     ).asFunction();
     _endAudioStream = l.lookup<NativeFunction<_EngineEndAudioStreamNative>>(
       'audio_engine_end_audio_stream',
-    ).asFunction();
-    _setStreamError = l.lookup<NativeFunction<_EngineSetStreamErrorNative>>(
-      'audio_engine_set_stream_error',
     ).asFunction();
     _pause = l.lookup<NativeFunction<_EnginePauseNative>>(
       'audio_engine_pause',
@@ -457,61 +375,20 @@ class Tunes4rFFI {
     _getLoadError = l.lookup<NativeFunction<_EngineGetLoadErrorNative>>(
       'audio_engine_get_load_error',
     ).asFunction();
-    _getLastError = l.lookup<NativeFunction<_EngineGetLastErrorNative>>(
-      'audio_engine_get_last_error',
-    ).asFunction();
-    _getPipeSeekOffset =
-        l.lookup<NativeFunction<_EngineGetPipeSeekOffsetNative>>(
-          'audio_engine_get_pipe_seek_offset',
-        ).asFunction();
-    _pollPipeSeekByteOffset =
-        l.lookup<NativeFunction<_EnginePollPipeSeekByteOffsetNative>>(
-          'audio_engine_poll_pipe_seek_byte_offset',
-        ).asFunction();
-    _clearPipeSeekRequest =
-        l.lookup<NativeFunction<_EngineClearPipeSeekRequestNative>>(
-          'audio_engine_clear_pipe_seek_request',
-        ).asFunction();
-    _setPipeTotalBytes =
-        l.lookup<NativeFunction<_EngineSetPipeTotalBytesNative>>(
-          'audio_engine_set_pipe_total_bytes',
-        ).asFunction();
-    _youtubeServiceCreate = l.lookup<NativeFunction<_YoutubeServiceCreateNative>>(
-      'youtube_service_create',
-    ).asFunction();
-    _youtubeServiceDestroy =
-        l.lookup<NativeFunction<_YoutubeServiceDestroyNative>>(
-          'youtube_service_destroy',
-        ).asFunction();
     _youtubeGetStreamUrl =
         l.lookup<NativeFunction<_YoutubeGetStreamUrlNative>>(
           'youtube_get_stream_url',
         ).asFunction();
-    _youtubeSearch = l.lookup<NativeFunction<_YoutubeSearchNative>>(
-      'youtube_search',
-    ).asFunction();
-    _youtubeGetVideoInfo =
-        l.lookup<NativeFunction<_YoutubeGetVideoInfoNative>>(
-          'youtube_get_video_info',
-        ).asFunction();
     _playYoutube = l.lookup<NativeFunction<_EnginePlayYoutubeNative>>(
       'audio_engine_play_youtube',
     ).asFunction();
-    _playStreamWithDownloader =
-        l.lookup<NativeFunction<_EnginePlayStreamWithDownloaderNative>>(
-          'audio_engine_play_stream_with_downloader',
-        ).asFunction();
     _playLive = l.lookup<NativeFunction<_EnginePlayLiveNative>>(
       'audio_engine_play_live',
     ).asFunction();
-    _youtubeDownloadAudio =
-        l.lookup<NativeFunction<_YoutubeDownloadAudioNative>>(
-          'youtube_download_audio',
-        ).asFunction();
   }
 
   // ---------------------------------------------------------------------------
-  // Public API — low-level (Pointer<AduioEngineHandle>)
+  // Public API — low-level (Pointer<AudioEngineHandle>)
   // ---------------------------------------------------------------------------
 
   Pointer<Void> createEngine() => _create();
@@ -529,37 +406,10 @@ class Tunes4rFFI {
   bool canSeek(Pointer<Void> h) => _canSeek(h);
   bool canDownload(Pointer<Void> h) => _canDownload(h);
 
-  int playStreamFromBytes(Pointer<Void> h, String url) {
-    final ptr = url.toNativeUtf8();
-    try {
-      return _playStreamFromBytes(h, ptr);
-    } finally {
-      calloc.free(ptr);
-    }
-  }
-
-  int fetchAndPipe(Pointer<Void> h, String url) {
-    final ptr = url.toNativeUtf8();
-    try {
-      return _fetchAndPipe(h, ptr);
-    } finally {
-      calloc.free(ptr);
-    }
-  }
-
   void pushAudioBytes(Pointer<Void> h, Pointer<Uint8> data, int len) =>
       _pushAudioBytes(h, data, len);
 
   void endAudioStream(Pointer<Void> h) => _endAudioStream(h);
-
-  void setStreamError(Pointer<Void> h, String message) {
-    final ptr = message.toNativeUtf8();
-    try {
-      _setStreamError(h, ptr);
-    } finally {
-      calloc.free(ptr);
-    }
-  }
 
   void pause(Pointer<Void> h) => _pause(h);
   void resume(Pointer<Void> h) => _resume(h);
@@ -603,26 +453,10 @@ class Tunes4rFFI {
     return s.isEmpty ? null : s;
   }
 
-  String? getLastError(Pointer<Void> h) {
-    final ptr = _getLastError(h);
-    if (ptr == nullptr) return null;
-    final s = ptr.toDartString();
-    calloc.free(ptr);
-    return s.isEmpty ? null : s;
-  }
-
-  int getPipeSeekOffset(Pointer<Void> h) => _getPipeSeekOffset(h);
-  int pollPipeSeekByteOffset(Pointer<Void> h) => _pollPipeSeekByteOffset(h);
-  void clearPipeSeekRequest(Pointer<Void> h) => _clearPipeSeekRequest(h);
-  void setPipeTotalBytes(Pointer<Void> h, int b) => _setPipeTotalBytes(h, b);
-
-  Pointer<Void> youtubeServiceCreate() => _youtubeServiceCreate();
-  void youtubeServiceDestroy(Pointer<Void> h) => _youtubeServiceDestroy(h);
-
-  String? youtubeGetStreamUrl(Pointer<Void> h, String videoId) {
+  String? youtubeGetStreamUrl(String videoId) {
     final ptr = videoId.toNativeUtf8();
     try {
-      final resultPtr = _youtubeGetStreamUrl(h, ptr);
+      final resultPtr = _youtubeGetStreamUrl(ptr);
       if (resultPtr == nullptr) return null;
       final s = resultPtr.toDartString();
       calloc.free(resultPtr);
@@ -632,49 +466,12 @@ class Tunes4rFFI {
     }
   }
 
-  String? youtubeSearch(Pointer<Void> h, String query, {int limit = 20}) {
-    final queryPtr = query.toNativeUtf8();
-    try {
-      final resultPtr = _youtubeSearch(h, queryPtr, limit);
-      if (resultPtr == nullptr) return null;
-      final s = resultPtr.toDartString();
-      calloc.free(resultPtr);
-      return s.isEmpty ? null : s;
-    } finally {
-      calloc.free(queryPtr);
-    }
-  }
-
-  String? youtubeGetVideoInfo(Pointer<Void> h, String videoId) {
-    final ptr = videoId.toNativeUtf8();
-    try {
-      final resultPtr = _youtubeGetVideoInfo(h, ptr);
-      if (resultPtr == nullptr) return null;
-      final s = resultPtr.toDartString();
-      calloc.free(resultPtr);
-      return s.isEmpty ? null : s;
-    } finally {
-      calloc.free(ptr);
-    }
-  }
-
-  int playYoutube(Pointer<Void> h, String url, String cacheDir) {
+  int playYoutube(Pointer<Void> h, String url) {
     final urlPtr = url.toNativeUtf8();
-    final cachePtr = cacheDir.toNativeUtf8();
     try {
-      return _playYoutube(h, urlPtr, cachePtr);
+      return _playYoutube(h, urlPtr);
     } finally {
       calloc.free(urlPtr);
-      calloc.free(cachePtr);
-    }
-  }
-
-  int playStreamWithDownloader(Pointer<Void> h, String url) {
-    final ptr = url.toNativeUtf8();
-    try {
-      return _playStreamWithDownloader(h, ptr);
-    } finally {
-      calloc.free(ptr);
     }
   }
 
@@ -687,21 +484,14 @@ class Tunes4rFFI {
     }
   }
 
-  int youtubeDownloadAudio(
-    Pointer<Void> h,
-    String videoId,
-    String outputPath,
-  ) {
-    final videoIdPtr = videoId.toNativeUtf8();
-    final outputPathPtr = outputPath.toNativeUtf8();
-    try {
-      return _youtubeDownloadAudio(h, videoIdPtr, outputPathPtr);
-    } finally {
-      calloc.free(videoIdPtr);
-      calloc.free(outputPathPtr);
-    }
-  }
 }
 
 /// Convenience singleton.
+///
+/// Consider using dependency injection via [AudioEngine.create](ffi:)
+/// instead, which accepts a custom [Tunes4rFFI] instance.
+@Deprecated(
+  'Prefer dependency injection via AudioEngine.create(ffi: myFFI). '
+  'This global will be removed in a future release.',
+)
 final Tunes4rFFI tunes4rFFI = Tunes4rFFI();
