@@ -10,6 +10,7 @@ ios/Frameworks/libtunes4r.a
 ios/Frameworks/libtunes4r.xcframework/
 macos/Frameworks/libtunes4r.dylib
 macos/Frameworks/libtunes4r.xcframework/
+macos/tunes4r_player/Frameworks/
 android/src/main/jniLibs/
 
 # Rust build artifacts
