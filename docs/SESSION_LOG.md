@@ -393,3 +393,50 @@ The backward seek path spawned a new decode thread with `Arc::new(AtomicU64::new
 
 ### Verification
 - `cargo test --test mock_youtube_stream` — **23/23 pass** (12.4s)
+
+## Session 17 — YouTube cache-reopen seek fix (2026-06-09)
+
+### Goal
+Fix YouTube streaming seek within buffered area: cache-reopen path was making a new HTTP connection instead of serving from cache.
+
+### Done
+1. **`open(None)` → `open(Some(clamped_position))`** (`commands.rs:832`): The cache-reopen seek path now calls `open(Some(position))` instead of `open(None)`. `open(None)` clears the `ByteCache` and starts a fresh HTTP download (defeating the purpose of a cached seek). `open(Some(_))` returns a `CachedReader` from the existing cache without making a new network request.
+
+2. **Permanent header buffer in `ByteCache`** (`caching.rs`): Added `header: Vec<u8>` that permanently stores the first `HEADER_RESERVE` (512 KB) bytes. The `CachedReader` serves format-probe reads from this buffer, so the Matroska re-probe works even after the main ring buffer has wrapped and evicted early bytes. Three changes:
+   - `push()`: captures the first 512 KB into `header`, then fills the ring buffer as before
+   - `read_at()`: serves from `header` for offsets < header.len(), from ring buffer otherwise
+   - `is_offset_cached()`: always returns `true` for offsets in the header region
+   - `clear()`: clears both `header` and `data`
+
+3. All cache-reopen seeks now complete in **< 600 ms** (vs. 7+ second timeout + new HTTP connection before the fix).
+
+### Verification
+- `flutter test --dart-define=YT_TEST=true test/yt_stream_seek_test.dart` — **All tests passed**
+- Seek results: 5000ms→5064ms (483ms), 10000ms→10064ms (266ms), 20000ms→20096ms (591ms), 8000ms→8074ms (478ms), 15000ms→15053ms (486ms)
+- No new HTTP connections after initial download — all seeks served from cache
+
+## Session 18 — Cache-reopen ALL buffer seeks + detach thread (2026-06-09)
+
+### Done
+1. **Detach old decode thread** (`commands.rs:833`): `drop(self.playback_handle.take())` instead of `join_with_timeout(3000ms)`. The old CPAL stream writes silence via `OUTPUT_GEN` invalidation, so there's no audio glitch. Removes 100-600ms of seek latency per seek.
+
+2. **Cache-reopen for ALL buffer seeks** (`commands.rs:811-813`): Removed the `_is_backward` classification that restricted cache-reopen to backward seeks only. Forward seeks within the buffer now also use cache-reopen instead of the broken in-thread seek path (which relied on `format.seek()` → native seek → `ReadOnlySource.byte_len()` returns `None` → packet-skip fallback, which was very slow for forward seeks).
+
+3. **Rejected approaches**: 
+   - `LenSource<MediaSource>` wrapper providing `byte_len()`: Broke format probing — the Matroska demuxer uses `byte_len()` to `SeekFrom::End()` during init, but the cache hasn't been filled yet, causing "seek beyond cached range" errors.
+   - Threading `content_len` through `decode_and_play_from_read`: Too many callers to change across commands.rs, file_decoder.rs, and handling.rs for minimal gain.
+
+### Seek timings (this session)
+```
+Seek  5000 ms → position  5056 ms (111ms)
+Seek 10000 ms → position 10074 ms (107ms)
+Seek 20000 ms → position 20053 ms (103ms)
+Seek  8000 ms → position  8074 ms (104ms)
+Seek 15000 ms → position 15064 ms (103ms)
+```
+All seeks ~100ms, zero new HTTP connections. ~80% faster than session 17 (~500ms → ~100ms), mostly from the thread detach fix.
+
+### Verification
+- `cargo build --release` — 0 errors
+- `flutter test --dart-define=YT_TEST=1 test/yt_stream_seek_test.dart` — **All tests passed**
+- 55 second test: 30s initial play + 5×5s segments + 5 seeks ≈ 55s total

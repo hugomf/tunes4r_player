@@ -9,13 +9,22 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Minimum bytes to keep at the start of the stream for format re-probes.
+/// Must be large enough to hold the Matroska/WebM header (EBML + Segment +
+/// Info + Tracks + Cues).  512 KB is conservative.
+const HEADER_RESERVE: usize = 524_288;
+
 /// Thread-safe byte ring buffer for caching stream data.
 ///
-/// Stores the most recent `max_bytes` bytes of the stream. New bytes are
-/// pushed with `push()`, oldest bytes are evicted when capacity is reached.
-/// `read_at()` reads from an absolute byte offset, returning 0 if the
-/// offset has been evicted or is past the write head.
+/// Two-tier storage:
+/// - `header` — first `HEADER_RESERVE` bytes, stored permanently (never evicted).
+/// - `data` — ring buffer of the most recent `max_bytes` bytes *after* the
+///   header region.
+///
+/// This guarantees the format header is always available for re-probes after
+/// a cache-reopen seek, even when the ring buffer has wrapped.
 pub(crate) struct ByteCache {
+    header: Vec<u8>,
     data: VecDeque<u8>,
     max_bytes: usize,
     total_written: u64,
@@ -24,6 +33,7 @@ pub(crate) struct ByteCache {
 impl ByteCache {
     fn new(max_bytes: usize) -> Self {
         Self {
+            header: Vec::with_capacity(HEADER_RESERVE.min(100_000_000)),
             data: VecDeque::with_capacity(max_bytes.min(100_000_000)),
             max_bytes,
             total_written: 0,
@@ -31,12 +41,21 @@ impl ByteCache {
     }
 
     fn push(&mut self, buf: &[u8]) {
+        // Fill the permanent header region (up to HEADER_RESERVE bytes).
+        if (self.header.len() as u64) < HEADER_RESERVE as u64 {
+            let remaining = HEADER_RESERVE - self.header.len();
+            let take = buf.len().min(remaining);
+            self.header.extend(&buf[..take]);
+        }
+
+        // Ring buffer for data beyond the header region.
         let room = self.max_bytes.saturating_sub(self.data.len());
         if buf.len() > room {
             let excess = buf.len() - room;
             self.data.drain(..excess.min(self.data.len()));
         }
         self.data.extend(buf);
+
         self.total_written = self.total_written.wrapping_add(buf.len() as u64);
     }
 
@@ -45,6 +64,18 @@ impl ByteCache {
     }
 
     fn read_at(&self, abs_offset: u64, buf: &mut [u8]) -> usize {
+        // Serve from the permanent header region if the offset falls within it.
+        if (abs_offset as usize) < self.header.len() {
+            let available = self.header.len() - abs_offset as usize;
+            let to_read = buf.len().min(available);
+            let start = abs_offset as usize;
+            for (i, b) in self.header[start..start + to_read].iter().enumerate() {
+                buf[i] = *b;
+            }
+            return to_read;
+        }
+
+        // Otherwise read from the ring buffer.
         if self.data.is_empty() {
             return 0;
         }
@@ -65,11 +96,17 @@ impl ByteCache {
     }
 
     fn clear(&mut self) {
+        self.header.clear();
         self.data.clear();
         self.total_written = 0;
     }
 
     fn is_offset_cached(&self, abs_offset: u64) -> bool {
+        // Everything in the header region is always cached.
+        if (abs_offset as usize) < self.header.len() {
+            return true;
+        }
+        // For data beyond the header, check the ring buffer.
         if self.data.is_empty() {
             return false;
         }

@@ -145,6 +145,17 @@ pub fn from_uri(
         Box::new(radio::RadioSource::new(uri, client))
     } else if std::path::Path::new(uri).exists() {
         Box::new(file::FileSource::new(uri))
+    } else if uri.contains('/') || uri.contains('\\') {
+        // Looks like a file path but doesn't exist on disk.
+        // Return an error instead of silently falling through to YouTube search,
+        // which would treat the file path as a search query.
+        return Err(PlaybackError::FileOpen {
+            path: uri.into(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found or inaccessible on this platform",
+            ),
+        });
     } else {
         // Assume YouTube video ID or search query
         Box::new(CachingDecorator::new(

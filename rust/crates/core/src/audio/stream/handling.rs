@@ -422,36 +422,14 @@ fn build_and_play_stream(
     let pq = audio_queue.clone();
     let br = buffer_ready.clone();
     let sp = samples_played.clone();
+    let my_gen = crate::audio::stream::cpal_source::OUTPUT_GEN.load(Ordering::Relaxed);
     device
         .build_output_stream(
             config,
             move |data: &mut [f32], _| {
-                if !br.load(Ordering::Relaxed) {
-                    for sample in data.iter_mut() {
-                        *sample = 0.0;
-                    }
-                    return;
-                }
-                let mut queue = pq.lock();
-                let mut count = 0;
-                for sample in data.iter_mut() {
-                    *sample = queue.pop_front().unwrap_or(0.0);
-                    count += 1;
-                }
-                if count > 0 {
-                    let vol = crate::audio::stream::cpal_source::get_volume_gain();
-                    let bal = crate::audio::stream::cpal_source::get_balance_gain().clamp(0.0, 1.0);
-                    let (left_gain, right_gain) = if bal <= 0.5 {
-                        (vol, vol * bal * 2.0)
-                    } else {
-                        (vol * (1.0 - bal) * 2.0, vol)
-                    };
-                    for frame in data.chunks_exact_mut(2) {
-                        frame[0] *= left_gain;
-                        frame[1] *= right_gain;
-                    }
-                    sp.fetch_add(count as u64, Ordering::Relaxed);
-                }
+                crate::audio::stream::cpal_source::run_output_callback(
+                    data, &pq, &br, &sp, my_gen,
+                );
             },
             |err| error!("[stream] Audio output error: {}", err),
             None,

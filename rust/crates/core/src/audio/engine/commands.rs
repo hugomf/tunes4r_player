@@ -808,11 +808,13 @@ impl PlaybackEngine {
         if let Some(playback_type) = current_playback_type {
             match playback_type {
                 PlaybackType::Stream { url, .. } => {
-                    let _is_backward = clamped_position < buffer.read_offset_ms;
                     #[cfg(not(target_os = "android"))]
-                    if _is_backward {
+                    {
                         let _ = &url;
-                        info!("[engine] Cache-reopen seek to {} ms (backward within buffer)", clamped_position);
+                        info!("[engine] Cache-reopen seek to {} ms", clamped_position);
+                        // Invalidate old CPAL streams so they write silence.
+                        crate::audio::stream::cpal_source::OUTPUT_GEN
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         // Signal old decode thread to stop.
                         self.should_stop.store(true, Ordering::Relaxed);
                         self.buffer_ready.store(false, Ordering::Relaxed);
@@ -821,12 +823,20 @@ impl PlaybackEngine {
                             q.clear();
                         }
                         self.samples_played.store(0, Ordering::Relaxed);
-                        if let Some(handle) = self.playback_handle.take() {
-                            Self::join_with_timeout(handle, "stream-seek-cache");
-                        }
+                        // Detach the old decode thread instead of joining it.
+                        // join_with_timeout waited up to 3 seconds for CoreAudio's
+                        // stream drop() to complete — that's the single biggest
+                        // contributor to seek latency.  With OUTPUT_GEN invalidation
+                        // the old CPAL callback writes silence, so there's no audio
+                        // glitch even while the old thread is still exiting.
+                        drop(self.playback_handle.take());
                         self.should_stop.store(false, Ordering::Relaxed);
-                        // Open source from cache (CachingDecorator returns CachedReader).
-                        let reader = self.source.as_ref().unwrap().open(None)?;
+                        // Open source from cache — open(Some(...)) tells CachingDecorator
+                        // to return a CachedReader from the existing ByteCache without
+                        // making a new HTTP connection.  open(None) would clear the cache
+                        // and start a fresh download, which defeats the purpose of a
+                        // cache-reopen seek.
+                        let reader = self.source.as_ref().unwrap().open(Some(clamped_position))?;
                         let counting = ByteCountingRead::new(reader, self.pipe_bytes_sent.clone());
                         // Clone Arcs for the decode thread.
                         let audio_queue = self.audio_queue.clone();
@@ -881,20 +891,6 @@ impl PlaybackEngine {
                         self.push_seek_completed(clamped_position);
                         return Ok(());
                     }
-                    // Forward (or unknown direction) seek within buffer:
-                    // use in-thread seek via seek_request atomic.
-                    #[cfg(not(target_os = "android"))]
-                    {
-                        let _ = &url;
-                        info!("[engine] In-thread seek to {} ms", clamped_position);
-                        self.seek_request.store(clamped_position, Ordering::Relaxed);
-                        {
-                            let mut q = self.audio_queue.lock();
-                            q.clear();
-                        }
-                        self.push_seek_completed(clamped_position);
-                        return Ok(());
-                    }
                     // Android: use the legacy play_stream path (re-download stream)
                     #[cfg(target_os = "android")]
                     {
@@ -908,6 +904,8 @@ impl PlaybackEngine {
                         "[engine] Restarting file playback for seek to {} ms",
                         position_ms
                     );
+                    crate::audio::stream::cpal_source::OUTPUT_GEN
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.should_stop.store(true, Ordering::Relaxed);
                     self.buffer_ready.store(false, Ordering::Relaxed);
                     {
@@ -935,6 +933,8 @@ impl PlaybackEngine {
                     let total_duration_ms = self.total_duration_ms.clone();
                     let load_error = self.load_error.clone();
                     let seek_target = self.seek_target_ms.clone();
+                    let stream_ended = self.stream_ended.clone();
+                    let event_queue = self.event_queue.clone();
 
                     #[cfg(target_os = "android")]
                     let play_fn = crate::audio::decoder::file_decoder::play_file_internal;
@@ -947,14 +947,26 @@ impl PlaybackEngine {
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,
-                            should_stop,
+                            should_stop.clone(),
                             samples_played,
                             sample_rate,
                             channels,
                             total_duration_ms,
-                            load_error,
+                            load_error.clone(),
                             seek_target,
                         );
+
+                        if !should_stop.load(Ordering::Relaxed) && load_error.lock().is_empty() {
+                            stream_ended.store(true, Ordering::Relaxed);
+                            event_queue.lock().push_back(EngineEvent {
+                                event_type: ENGINE_EVENT_END_OF_STREAM,
+                                int_param: 0,
+                            });
+                            event_queue.lock().push_back(EngineEvent {
+                                event_type: ENGINE_EVENT_STATE_CHANGED,
+                                int_param: PlaybackState::Stopped.to_i32() as i64,
+                            });
+                        }
                     });
                     self.playback_handle = Some(handle);
 
@@ -981,6 +993,8 @@ impl PlaybackEngine {
                         "[engine] Restarting pipe playback for seek to {} ms",
                         position_ms
                     );
+                    crate::audio::stream::cpal_source::OUTPUT_GEN
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     self.should_stop.store(true, Ordering::Relaxed);
                     self.buffer_ready.store(false, Ordering::Relaxed);
                     {
@@ -1017,6 +1031,8 @@ impl PlaybackEngine {
                     let channels = self.channels.clone();
                     let total_duration_ms = self.total_duration_ms.clone();
                     let load_error = self.load_error.clone();
+                    let stream_ended = self.stream_ended.clone();
+                    let event_queue = self.event_queue.clone();
 
                     #[cfg(target_os = "android")]
                     let play_fn =
@@ -1030,13 +1046,25 @@ impl PlaybackEngine {
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,
-                            should_stop,
+                            should_stop.clone(),
                             samples_played,
                             sample_rate,
                             channels,
                             total_duration_ms,
-                            load_error,
+                            load_error.clone(),
                         );
+
+                        if !should_stop.load(Ordering::Relaxed) && load_error.lock().is_empty() {
+                            stream_ended.store(true, Ordering::Relaxed);
+                            event_queue.lock().push_back(EngineEvent {
+                                event_type: ENGINE_EVENT_END_OF_STREAM,
+                                int_param: 0,
+                            });
+                            event_queue.lock().push_back(EngineEvent {
+                                event_type: ENGINE_EVENT_STATE_CHANGED,
+                                int_param: PlaybackState::Stopped.to_i32() as i64,
+                            });
+                        }
                     });
                     self.playback_handle = Some(handle);
                     self.push_seek_completed(clamped_position);

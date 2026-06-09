@@ -44,6 +44,19 @@ pub fn get_balance_gain() -> f32 {
     f32::from_bits(BALANCE.load(Ordering::Relaxed))
 }
 
+/// Monotonically increasing generation counter for CPAL output streams.
+///
+/// Each time the engine starts a new seek that spawns a new decode thread
+/// (and thus a new CPAL output stream), it increments this counter. Every
+/// CPAL callback captures its expected generation at stream-creation time
+/// and compares against this global on each invocation. If the values
+/// differ, the callback writes silence and returns.
+///
+/// This prevents two CPAL streams from consuming the shared audio queue
+/// concurrently when a seek-triggered thread is slow to exit and the
+/// engine detaches it after a 3-second timeout.
+pub(crate) static OUTPUT_GEN: AtomicU64 = AtomicU64::new(0);
+
 /// Type alias for the shared ring buffer between the decode thread
 /// (producer) and the cpal callback (consumer).
 ///
@@ -85,12 +98,13 @@ pub fn build_output_stream(
     let audio_ring_c = audio_ring.clone();
     let buffer_ready_c = buffer_ready.clone();
     let samples_played_c = samples_played.clone();
+    let my_gen = OUTPUT_GEN.load(Ordering::Relaxed);
 
     device
         .build_output_stream(
             config,
             move |data: &mut [f32], _| {
-                run_output_callback(data, &audio_ring_c, &buffer_ready_c, &samples_played_c);
+                run_output_callback(data, &audio_ring_c, &buffer_ready_c, &samples_played_c, my_gen);
             },
             |err| info!("[cpal_source] stream error: {}", err),
             None,
@@ -117,7 +131,12 @@ pub fn run_output_callback(
     audio_ring: &AudioRing,
     buffer_ready: &Arc<AtomicBool>,
     samples_played: &Arc<AtomicU64>,
+    my_gen: u64,
 ) {
+    if OUTPUT_GEN.load(Ordering::Relaxed) != my_gen {
+        data.fill(0.0);
+        return;
+    }
     if !buffer_ready.load(Ordering::Relaxed) {
         data.fill(0.0);
         return;
@@ -202,7 +221,7 @@ mod tests {
         let played = Arc::new(AtomicU64::new(0));
         let mut data = [0.0_f32; 4];
 
-        run_output_callback(&mut data, &ring, &ready, &played);
+        run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
 
         assert_eq!(data, [0.0; 4], "should be silence, not 0.5");
         assert_eq!(played.load(Ordering::Relaxed), 0, "should not advance position");
@@ -221,7 +240,7 @@ mod tests {
         let played = Arc::new(AtomicU64::new(0));
         let mut data = [1.0_f32; 8]; // pre-fill with non-silence sentinel
 
-        run_output_callback(&mut data, &ring, &ready, &played);
+        run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
 
         assert_eq!(data, [0.0; 8], "empty ring → silence");
         assert_eq!(played.load(Ordering::Relaxed), 0, "should NOT advance during starvation");
@@ -238,7 +257,7 @@ mod tests {
         let played = Arc::new(AtomicU64::new(100));
         let mut data = [0.0_f32; 4];
 
-        run_output_callback(&mut data, &ring, &ready, &played);
+        run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
 
         assert_eq!(data, [0.1, 0.2, 0.3, 0.4]);
         assert!(ring.lock().is_empty());
@@ -257,7 +276,7 @@ mod tests {
         let played = Arc::new(AtomicU64::new(0));
         let mut data = [0.0_f32; 6];
 
-        run_output_callback(&mut data, &ring, &ready, &played);
+        run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
 
         assert_eq!(data, [0.7, 0.8, 0.0, 0.0, 0.0, 0.0]);
         assert_eq!(played.load(Ordering::Relaxed), 2, "advances only for real samples (2 of 6)");
@@ -275,7 +294,7 @@ mod tests {
         let played = Arc::new(AtomicU64::new(0));
         let mut data = [0.0_f32; 4];
 
-        run_output_callback(&mut data, &ring, &ready, &played);
+        run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
 
         assert_eq!(data, [0.1, 0.2, 0.3, 0.4]);
         // The remaining 6 samples are still in the ring.
@@ -292,7 +311,7 @@ mod tests {
         let played = Arc::new(AtomicU64::new(0));
         let mut data: [f32; 0] = [];
 
-        run_output_callback(&mut data, &ring, &ready, &played);
+        run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
 
         assert_eq!(played.load(Ordering::Relaxed), 0);
         assert_eq!(ring.lock().len(), 1, "ring untouched on empty data");
@@ -384,7 +403,7 @@ mod tests {
         // consumer rate (1:1). The buffer should never empty.
         for _ in 0..10_000 {
             let mut data = vec![0.0f32; callback_samples];
-            run_output_callback(&mut data, &ring, &ready, &played);
+            run_output_callback(&mut data, &ring, &ready, &played, OUTPUT_GEN.load(Ordering::Relaxed));
             // Producer replaces exactly what was consumed
             for _ in 0..callback_samples {
                 ring.lock().push_back(0.5);
