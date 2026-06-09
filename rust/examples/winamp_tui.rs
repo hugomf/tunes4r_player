@@ -175,6 +175,9 @@ impl LogBuffer {
 // Spectrum state (uses real GLOBAL_SPECTRUM when playing)
 // ─────────────────────────────────────────────────────────────────────────────
 const N_BARS: usize = 32;
+const PEAK_BOUNCE: f32 = 2.0;
+const PEAK_GRAVITY: f32 = 0.04;
+const PEAK_MAX: f32 = 1.0;
 
 struct SpectrumState {
     smoothed: [f32; N_BARS],
@@ -191,13 +194,16 @@ impl SpectrumState {
         }
     }
 
-    fn update(&mut self, is_playing: bool, delta: f32) {
+    fn update(&mut self, is_playing: bool, _delta: f32) {
         if !is_playing {
             for a in &mut self.smoothed {
                 *a = (*a * 0.82).max(0.0);
             }
             for p in &mut self.peaks {
                 *p = 0.0;
+            }
+            for v in &mut self.peak_vel {
+                *v = 0.0;
             }
             return;
         }
@@ -214,13 +220,15 @@ impl SpectrumState {
                 (c - 0.10 * (c - t)).max(0.0)
             };
             let amp = self.smoothed[i];
-            let dt = delta / 0.033;
-            if amp > self.peaks[i] {
-                self.peak_vel[i] += (amp - self.peaks[i]) * 2.0;
+
+            // Peak physics: jump up instantly, fall under gravity
+            if amp >= self.peaks[i] {
+                self.peak_vel[i] = (amp - self.peaks[i]) * PEAK_BOUNCE;
+                self.peaks[i] = amp;
+            } else {
+                self.peak_vel[i] -= PEAK_GRAVITY;
+                self.peaks[i] = (self.peaks[i] + self.peak_vel[i]).clamp(0.0, PEAK_MAX);
             }
-            self.peak_vel[i] -= 0.025 * dt;
-            self.peak_vel[i] *= 0.88;
-            self.peaks[i] = (self.peaks[i] + self.peak_vel[i] * dt).clamp(0.0, 1.0);
         }
     }
 }
@@ -669,8 +677,8 @@ impl Widget for TitleBar {
             }
         }
 
-        // ════ WINAMP ════ centered between menu and chrome
-        let title = "════ WINAMP ════";
+        // ═══════════ WINAMP ═══════════ centered between menu and chrome
+        let title = "═══════════ WINAMP ═══════════";
         let left_bound = area.left() + 4;
         let right_bound = chrome_start;
         let avail = right_bound.saturating_sub(left_bound);
@@ -734,6 +742,7 @@ impl<'a> Widget for LcdPanel<'a> {
             .set_char(state_ch)
             .set_fg(state_color)
             .set_bg(C_LCD_BG);
+        let label_dim = Color::Rgb(34, 60, 34);
         let label = if self.show_remaining { " REM" } else { " CUR" };
         put_str(
             buf,
@@ -741,7 +750,7 @@ impl<'a> Widget for LcdPanel<'a> {
             inner.y,
             inner.right(),
             label,
-            C_LCD_OFF,
+            label_dim,
             C_LCD_BG,
         );
 
@@ -802,8 +811,8 @@ impl<'a> Widget for LcdPanel<'a> {
             }
         }
 
-        // Spectrum bars (rows 7+)
-        let spec_y_start = inner.y + 7;
+        // Spectrum bars (rows 6+ — one row tighter than before)
+        let spec_y_start = inner.y + 6;
         if spec_y_start >= inner.bottom() {
             return;
         }
@@ -833,10 +842,10 @@ impl<'a> Widget for LcdPanel<'a> {
         // Bars area (padded: 2 cols from left, 1 row from bottom)
         let bars_x = spec_x + 2;
         let bars_w = spec_w.saturating_sub(3);
-        let bar_max_h = 8u16;
+        let bar_max_h = 10u16;
         let raw_h = spec_h.saturating_sub(1);
         let bars_h = raw_h.min(bar_max_h);
-        let bar_skip = (raw_h - bars_h) / 2;
+        let bar_skip = 0u16;
         if bars_w == 0 || bars_h == 0 {
             return;
         }
@@ -845,42 +854,46 @@ impl<'a> Widget for LcdPanel<'a> {
 
         let total_cells = bars_h as f32;
 
+        let zones: &[(f32, f32, Color)] = &[
+            (0.00, 0.20, Color::Rgb(0,   204,   0)),
+            (0.20, 0.45, Color::Rgb(136, 204,   0)),
+            (0.45, 0.65, Color::Rgb(255, 170,   0)),
+            (0.65, 0.82, Color::Rgb(221, 102,   0)),
+            (0.82, 1.00, Color::Rgb(204,  51,   0)),
+        ];
+
         for i in 0..bar_count {
-            let amp = self.spectrum.smoothed[i];
-            let peak = self.spectrum.peaks[i];
+            let amp   = self.spectrum.smoothed[i];
+            let peak  = self.spectrum.peaks[i];
+            let bx    = bars_x + i as u16;
 
-            let filled = (amp * total_cells).round() as u16;
-            let peak_row = if peak > 0.02 {
-                (peak * total_cells).round() as u16
-            } else {
-                0
-            };
-            let bx = bars_x + i as u16;
+            let filled    = (amp  * total_cells).round() as u16;
+            let peak_row  = if peak > 0.02 { (peak * total_cells).round() as u16 } else { 0 };
 
-            let render_top = peak_row.max(filled).min(bars_h);
-            for row in 0..render_top {
+            // Draw bar cells bottom-up
+            for row in 0..filled {
                 let ry = spec_y_start + bar_skip + (raw_h - 1 - row);
                 if ry >= inner.bottom() || bx >= inner.right() {
                     continue;
                 }
-                let is_top = row == render_top - 1;
-                let is_peak = is_top && peak_row > 0 && row >= filled;
-                if is_peak {
+                let frac = row as f32 / total_cells;
+                let color = zones
+                    .iter()
+                    .find(|(lo, hi, _)| frac >= *lo && frac < *hi)
+                    .map(|(_, _, c)| *c)
+                    .unwrap_or(Color::Rgb(204, 51, 0));
+
+                buf[(bx, ry)].set_char('█').set_fg(color).set_bg(C_LCD_BG);
+            }
+
+            // Draw peak dot (separate pass, always on top)
+            if peak_row > 0 && peak_row > filled {
+                let ry = spec_y_start + bar_skip + (raw_h.saturating_sub(1) - (peak_row - 1));
+                if ry < inner.bottom() && bx < inner.right() {
                     buf[(bx, ry)]
-                        .set_char('━')
+                        .set_char('▀')
                         .set_fg(Color::White)
                         .set_bg(C_LCD_BG);
-                } else {
-                    let color = match row {
-                        0 => Color::Rgb(0, 80, 0),
-                        1 => Color::Rgb(0, 200, 0),
-                        2 => Color::Rgb(210, 210, 0),
-                        3 => Color::Rgb(230, 140, 0),
-                        4 => Color::Rgb(230, 80, 0),
-                        5 => Color::Rgb(200, 0, 0),
-                        _ => Color::Rgb(255, 40, 40),
-                    };
-                    buf[(bx, ry)].set_char('█').set_fg(color).set_bg(C_LCD_BG);
                 }
             }
         }
@@ -1471,7 +1484,6 @@ fn draw(app: &WinampApp, frame: &mut ratatui::Frame) {
             Constraint::Length(BODY_H),
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(1),
         ])
         .split(player_area);
 
@@ -1536,21 +1548,11 @@ fn draw(app: &WinampApp, frame: &mut ratatui::Frame) {
     }
     .render(player_rows[2], buf);
 
-    // Controls
-    ControlsBar {
-        state: &state,
-        shuffle: app.shuffle,
-        repeat: app.repeat,
-        volume: app.volume,
-        balance: app.balance,
-    }
-    .render(player_rows[3], buf);
-
     // Help
     HelpBar {
         show_log: app.show_log,
     }
-    .render(player_rows[4], buf);
+    .render(player_rows[3], buf);
 
     // Log pane
     if let Some(la) = log_area {
