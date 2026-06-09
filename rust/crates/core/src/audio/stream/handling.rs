@@ -261,6 +261,7 @@ fn playback_loop(
     let mut last_spectrum_time = std::time::Instant::now();
 
     let mut decoded: u64 = 0;
+    let mut consecutive_packet_errors: u32 = 0;
     loop {
         if should_stop.load(Ordering::Relaxed) {
             debug!("[stream] Stop signal received, exiting loop");
@@ -360,7 +361,12 @@ fn playback_loop(
                 break;
             }
             Err(e) => {
-                debug!("[stream] Packet error: {}", e);
+                consecutive_packet_errors += 1;
+                debug!("[stream] Packet error ({}): {}", consecutive_packet_errors, e);
+                if consecutive_packet_errors >= 50 {
+                    info!("[stream] Too many consecutive packet errors ({})", consecutive_packet_errors);
+                    break;
+                }
                 thread::sleep(Duration::from_millis(100));
             }
         }
@@ -632,6 +638,7 @@ pub fn decode_and_play_from_read(
     // ── Phase 5: Prebuffer (with residual skip after packet-skip seek) ──
     debug!("[stream] Pre-buffering {} samples (7 seconds)...", target_buffer_samples);
     let mut buffered = 0;
+    let mut prebuffer_packet_errors = 0u32;
     while buffered < target_buffer_samples {
         if should_stop.load(Ordering::Relaxed) {
             break;
@@ -673,7 +680,12 @@ pub fn decode_and_play_from_read(
                 break;
             }
             Err(e) => {
-                debug!("[stream] Prebuffer packet error: {}", e);
+                prebuffer_packet_errors += 1;
+                debug!("[stream] Prebuffer packet error ({}): {}", prebuffer_packet_errors, e);
+                if prebuffer_packet_errors >= 50 {
+                    warn!("[stream] Too many prebuffer packet errors ({})", prebuffer_packet_errors);
+                    break;
+                }
                 thread::sleep(Duration::from_millis(100));
             }
         }
@@ -1238,7 +1250,14 @@ pub fn decode_and_play_from_read(
                 break;
             }
             Err(e) => {
-                log::warn!("[stream] Packet format error during pre-buffer: {}", e);
+                prebuffer_error_count += 1;
+                log::warn!("[stream] Packet format error during pre-buffer ({}/{}): {}", prebuffer_error_count, MAX_PACKET_ERRORS, e);
+                if prebuffer_error_count >= MAX_PACKET_ERRORS {
+                    let err_msg = format!("Too many prebuffer packet errors ({}): {}", prebuffer_error_count, e);
+                    log::error!("[stream] {}", err_msg);
+                    *load_error.lock() = err_msg;
+                    return;
+                }
                 thread::sleep(Duration::from_millis(10));
             }
         }
@@ -1354,7 +1373,14 @@ pub fn decode_and_play_from_read(
                 break;
             }
             Err(e) => {
-                log::warn!("[stream] Packet format error ({}): {}", decode_count + 1, e);
+                _packet_error_count += 1;
+                log::warn!("[stream] Packet format error ({}/{}): {}", _packet_error_count, MAX_PACKET_ERRORS, e);
+                if _packet_error_count >= MAX_PACKET_ERRORS {
+                    let err_msg = format!("Too many packet format errors ({}): {}", _packet_error_count, e);
+                    log::error!("[stream] {}", err_msg);
+                    *load_error.lock() = err_msg;
+                    break;
+                }
                 thread::sleep(Duration::from_millis(10));
             }
         }

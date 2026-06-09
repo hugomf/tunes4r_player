@@ -357,3 +357,39 @@ The backward seek path spawned a new decode thread with `Arc::new(AtomicU64::new
 ### Verification
 - `cargo check` — 0 errors
 - `cargo test --example winamp_tui` — 7/7 pass
+
+## Session 15 — Mock YouTube stream test enhancements (2026-06-09)
+
+### Done
+- **Enhanced `mock_youtube_stream.rs`** with 8 new tests (9 total):
+  - `state_lifecycle` — event-based state transition validation (Connecting → Buffering → Playing → Stopped)
+  - `poll_state_transitions` — poll-based state validation using `audio_engine_get_state()`
+  - `backward_seek` — cache-reopen seek path (playhead advances 3s then seeks back to 500ms)
+  - `forward_seek` — forward seek within buffer (playhead advances 3s then seeks to 5000ms)
+  - `multiple_rapid_seeks` — 3 seeks (8000→1000→5000→2000) validating all fire SEEK_STARTED
+  - `with_latency` — 50ms artificial latency, validates engine reaches Playing
+  - `throttled` — 500 KB/s throttle, forward+backward seeks
+  - `slow_connection` — 200 KB/s + 50ms latency, graceful seek failure handling (skip not panic)
+- **Added `NetworkConditions` struct** (latency_ms, throttle_bps) + `serve_fixture_with_network()` server
+- **Fixed slow_connection test**: originally used 20 KB/s + 100ms latency causing HTTP timeouts; now uses 200 KB/s + 50ms with graceful seek-failure handling
+- **Spectrum physics reverted** in winamp_tui.rs to match winamptest_ui (PEAK_BOUNCE=2.0, PEAK_GRAVITY=0.04, PEAK_MAX=1.0, no dt-scaling, no damping)
+
+### Verification
+- `cargo test --test mock_youtube_stream` — 9/9 pass (including CDN fixture replay)
+- `cargo test --test seek_streaming` — 10/10 pass
+- `cargo test --test yt_stream_seek` — 4/4 pass
+- `cargo test --test ffi_contract` — 9/9 pass
+- `cargo test -p tunes4r-core --lib` — 112/112 pass
+
+## Session 16 — Mock YouTube stream: comprehensive state tests (2026-06-09)
+
+### Done
+- **Expanded `mock_youtube_stream.rs` from 9 to 23 tests** covering pause/resume, end-of-stream, error injection, stop-from-any-state, unbuffered seeks, and replay/double-play
+- **Fixed all 3 regressions**: `end_of_stream` (synthetic MPEG2 with correct frame sizing for Symphonia probe + `audio/mpeg` Content-Type), `seek_unbuffered_with_latency` (wait for Playing before seeking), `stop_while_connecting` (removed debug output)
+- **Added helper functions**: `build_synthetic_mp3()`, `serve_fixture_with_count_and_type()`, `drain_eos_events()`
+- **Removed unused imports**: `PlaybackPosition`, `ENGINE_EVENT_POSITION_RESET`, `ENGINE_EVENT_SEEK_QUEUED`
+- **Added symphonia features**: `wav`, `pcm`, `symphonia-codec-pcm` dep
+- **Key fix**: Synthetic MP3 frames must have frame_size matching the MPEG frame size formula. Used MPEG2 (32kbps/16kHz → 144-byte frames) instead of MPEG1 (128kbps/44kHz → 417-byte frames).
+
+### Verification
+- `cargo test --test mock_youtube_stream` — **23/23 pass** (12.4s)
