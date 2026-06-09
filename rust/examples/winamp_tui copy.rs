@@ -45,8 +45,10 @@ const C_BODY_DARK: Color = Color::Rgb(19, 18, 28);
 const C_TITLE_FG: Color = Color::Rgb(200, 200, 216);
 const C_STATE_RED: Color = Color::Rgb(204, 51, 0);
 const C_SPEC_GRN: Color = Color::Rgb(0, 204, 0);
-const C_SPEC_DKB: Color = Color::Rgb(180, 120, 0);
+const C_SPEC_YLW: Color = Color::Rgb(136, 204, 0);
 const C_SPEC_AMB: Color = Color::Rgb(255, 170, 0);
+const C_SPEC_ORG: Color = Color::Rgb(221, 102, 0);
+const C_SPEC_RED: Color = Color::Rgb(204, 51, 0);
 const C_BADGE_BG: Color = Color::Rgb(10, 26, 10);
 const C_GRAY: Color = Color::Rgb(107, 107, 122);
 const C_DARK_GRAY: Color = Color::Rgb(40, 40, 55);
@@ -56,10 +58,10 @@ const C_LOG_WARN: Color = Color::Rgb(255, 200, 0);
 const C_LOG_ERR: Color = Color::Rgb(220, 60, 60);
 const C_FILE_SEL: Color = Color::Rgb(57, 255, 20);
 const C_FILE_DIR: Color = Color::Rgb(100, 180, 255);
-const C_BTN_BG: Color = Color::Rgb(42, 42, 66);
-const C_BTN_BEVEL_HI: Color = Color::Rgb(180, 180, 205);
-const C_BTN_BEVEL_LO: Color = Color::Rgb(12, 12, 24);
-const C_BTN_PRESSED: Color = Color::Rgb(26, 26, 44);
+const C_BTN_BG: Color = Color::Rgb(40, 40, 60);
+const C_BTN_BEVEL_HI: Color = Color::Rgb(140, 140, 165);
+const C_BTN_BEVEL_LO: Color = Color::Rgb(25, 25, 40);
+const C_BTN_PRESSED: Color = Color::Rgb(55, 55, 80);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Seven-segment glyphs (4 cols × 5 rows each, Unicode half-blocks)
@@ -174,6 +176,7 @@ struct SpectrumState {
     smoothed: [f32; N_BARS],
     peaks: [f32; N_BARS],
     peak_vel: [f32; N_BARS],
+    idle_time: f32,
 }
 
 impl SpectrumState {
@@ -182,16 +185,31 @@ impl SpectrumState {
             smoothed: [0.0; N_BARS],
             peaks: [0.0; N_BARS],
             peak_vel: [0.0; N_BARS],
+            idle_time: 0.0,
         }
     }
 
     fn update(&mut self, is_playing: bool, delta: f32) {
         if !is_playing {
-            for a in &mut self.smoothed {
-                *a = (*a * 0.82).max(0.0);
-            }
-            for p in &mut self.peaks {
-                *p = 0.0;
+            // Idle spectrum — gentle animated bars so it doesn't go flat
+            self.idle_time += delta;
+            for i in 0..N_BARS {
+                let phase = i as f32 * 0.7 + self.idle_time * 2.5;
+                let target = 0.15 + 0.25 * (phase.sin() * 0.5 + 0.5);
+                let c = self.smoothed[i];
+                self.smoothed[i] = if target > c {
+                    (c + 0.12 * (target - c)).min(1.0)
+                } else {
+                    (c - 0.08 * (c - target)).max(0.0)
+                };
+                let amp = self.smoothed[i];
+                if amp >= self.peaks[i] {
+                    self.peak_vel[i] = 0.0;
+                    self.peaks[i] = amp;
+                } else {
+                    self.peak_vel[i] -= 0.03 * delta / 0.033;
+                    self.peaks[i] = (self.peaks[i] + self.peak_vel[i]).max(0.0);
+                }
             }
             return;
         }
@@ -665,7 +683,7 @@ impl Widget for TitleBar {
         }
 
         // ════ WINAMP ════ centered between menu and chrome
-        let title = "════ WINAMP ════";
+        let title = "═════════════ WINAMP ══════════════";
         let left_bound = area.left() + 4;
         let right_bound = chrome_start;
         let avail = right_bound.saturating_sub(left_bound);
@@ -835,32 +853,60 @@ impl<'a> Widget for LcdPanel<'a> {
         }
 
         let bar_count = N_BARS.min(bars_w as usize);
+        const BLOCKS: &[char] = &[' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        const WZ: [(f32, f32, Color); 5] = [
+            (0.00, 0.20, C_SPEC_GRN),
+            (0.20, 0.45, C_SPEC_YLW),
+            (0.45, 0.65, C_SPEC_AMB),
+            (0.65, 0.82, C_SPEC_ORG),
+            (0.82, 1.00, C_SPEC_RED),
+        ];
+        let zone_color = |n: f32| -> Color {
+            for &(lo, hi, c) in &WZ {
+                if n >= lo && n < hi {
+                    return c;
+                }
+            }
+            C_SPEC_RED
+        };
 
         let total_cells = bars_h as f32;
+        let bg_dot = Color::Rgb(22, 38, 22);
+        let gap_every: usize = 3;
+
+        for y in spec_y_start..(spec_y_start + bars_h) {
+            for x in bars_x..(bars_x + bars_w) {
+                if y < inner.bottom() && x < inner.right() {
+                    buf[(x, y)].set_char('·').set_fg(bg_dot).set_bg(C_LCD_BG);
+                }
+            }
+        }
 
         for i in 0..bar_count {
             let amp = self.spectrum.smoothed[i];
             let peak = self.spectrum.peaks[i];
 
-            let filled = (amp * total_cells).round() as u16;
-            let bx = bars_x + i as u16;
+            let filled_f = amp * total_cells;
+            let full_rows = filled_f.floor() as u16;
+            let frac = filled_f - full_rows as f32;
+
+            let bx = bars_x + (i + i / gap_every) as u16;
             for row in 0..bars_h {
                 let ry = spec_y_start + (bars_h - 1 - row);
                 if ry >= inner.bottom() || bx >= inner.right() {
                     continue;
                 }
-                if row >= filled {
-                    break;
-                }
-                let n = row as f32 / bars_h as f32;
-                let color = if n < 0.25 {
-                    C_SPEC_GRN
-                } else if n < 0.55 {
-                    C_SPEC_DKB
+                let normalized = row as f32 / bars_h as f32;
+                let zone_fg = zone_color(normalized);
+                let (ch, fg) = if row < full_rows {
+                    ('█', zone_fg)
+                } else if row == full_rows && frac > 0.0 {
+                    let idx = ((frac * 8.0).round() as usize).min(8);
+                    (BLOCKS[idx], zone_fg)
                 } else {
-                    C_SPEC_AMB
+                    ('·', bg_dot)
                 };
-                buf[(bx, ry)].set_char('█').set_fg(color).set_bg(C_LCD_BG);
+                buf[(bx, ry)].set_char(ch).set_fg(fg).set_bg(C_LCD_BG);
             }
 
             if peak > 0.02 {
@@ -1454,13 +1500,12 @@ fn draw(app: &WinampApp, frame: &mut ratatui::Frame) {
         (area, None)
     };
 
-    const BODY_H: u16 = 22;
-
+    // Player layout: title(1) + body(16) + seek(1) + controls(1) + help(1)
     let player_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Length(BODY_H),
+            Constraint::Length(16),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -1478,10 +1523,10 @@ fn draw(app: &WinampApp, frame: &mut ratatui::Frame) {
 
     let state = app.playback_state();
 
-    // Split LCD column: display (top) + transport buttons (bottom 3 rows)
+    // Split LCD column: display (top) + transport buttons (bottom 4 rows)
     let lcd_split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(10), Constraint::Length(3)])
+        .constraints([Constraint::Min(10), Constraint::Length(4)])
         .split(body_cols[0]);
 
     LcdPanel {
@@ -1919,11 +1964,10 @@ mod tests {
     fn spectrum_decays_when_stopped() {
         let mut s = SpectrumState::new();
         s.smoothed[0] = 1.0;
-        s.peaks[0] = 1.0;
         s.update(false, 0.033);
         assert!(s.smoothed[0] < 1.0);
         assert!(s.smoothed[0] > 0.0);
-        assert_eq!(s.peaks[0], 0.0);
+        assert!(s.peaks[0] > 0.0);
     }
 
     #[test]

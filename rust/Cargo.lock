@@ -5398,6 +5398,7 @@ name = "tunes4r"
 version = "1.0.0"
 dependencies = [
  "android_logger",
+ "anyhow",
  "cbindgen",
  "cpal",
  "crossterm",
@@ -5423,6 +5424,7 @@ dependencies = [
  "symphonia-codec-aac",
  "symphonia-codec-vorbis",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "tracing-log",
  "tracing-subscriber",

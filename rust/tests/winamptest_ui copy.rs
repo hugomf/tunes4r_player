@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontFamily, Painter, Pos2, Rect, Response, Sense, Shape,
-    Stroke, StrokeKind, Ui, Vec2, WindowLevel,
+    self, Align2, Color32, CornerRadius, FontFamily, Painter, Pos2, Rect, Response, Sense,
+    Shape, Stroke, StrokeKind, Ui, Vec2, WindowLevel,
 };
 use tunes4r::audio::engine::types::{set_band_count, GLOBAL_SPECTRUM};
 use tunes4r::audio::stream::source::Capability;
@@ -75,68 +75,22 @@ const SHUFFLE_BTN_W: f32 = 75.0;
 const SHUFFLE_BTN_H: f32 = 28.0;
 const REPEAT_BTN_W: f32 = 48.0;
 const REPEAT_BTN_H: f32 = 28.0;
-const TRANSPORT_SPACER: f32 = 30.0;
-const LOGO_V_OFFSET: f32 = 10.0;
-const TIMER_LEFT_OFFSET: f32 = 22.0;
-const BADGE_LABEL_GAP: f32 = 4.0;
-const BADGE_STRIDE: f32 = 41.0;
-const MONO_IMAGE_SCALE: f32 = 1.05;
-const STEREO_IMG_W: f32 = 42.0;
-const STEREO_IMG_H: f32 = 24.0;
-const LCD_GRID_CELL: f32 = 4.0;
-const L_BORDER_GAP: f32 = 4.0;
 
 /// The metallic gold line palette for this variant.
 fn metallic_gold_lines() -> Vec<MetallicGoldLine> {
     vec![
-        MetallicGoldLine {
-            color: Color32::from_rgb(0x5b, 0x54, 0x42),
-            width: 0.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xe7, 0xcf, 0x86),
-            width: 1.0,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xee, 0xdd, 0xab),
-            width: 0.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xff, 0xff, 0xff),
-            width: 2.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xc6, 0xc5, 0xc4),
-            width: 0.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0x45, 0x41, 0x3d),
-            width: 1.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0x61, 0x5a, 0x4c),
-            width: 0.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xa1, 0x95, 0x6f),
-            width: 1.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xb6, 0xa6, 0x76),
-            width: 0.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0xe7, 0xcf, 0x86),
-            width: 1.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0x25, 0x26, 0x2c),
-            width: 0.5,
-        },
-        MetallicGoldLine {
-            color: Color32::from_rgb(0x5b, 0x54, 0x42),
-            width: 1.5,
-        },
+        MetallicGoldLine { color: Color32::from_rgb(0x5b, 0x54, 0x42), width: 0.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0xe7, 0xcf, 0x86), width: 1.0 },
+        MetallicGoldLine { color: Color32::from_rgb(0xee, 0xdd, 0xab), width: 0.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0xff, 0xff, 0xff), width: 2.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0xc6, 0xc5, 0xc4), width: 0.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0x45, 0x41, 0x3d), width: 1.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0x61, 0x5a, 0x4c), width: 0.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0xa1, 0x95, 0x6f), width: 1.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0xb6, 0xa6, 0x76), width: 0.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0xe7, 0xcf, 0x86), width: 1.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0x25, 0x26, 0x2c), width: 0.5 },
+        MetallicGoldLine { color: Color32::from_rgb(0x5b, 0x54, 0x42), width: 1.5 },
     ]
 }
 
@@ -145,23 +99,17 @@ fn metallic_gold_lines() -> Vec<MetallicGoldLine> {
 // =============================================================================
 
 /// Draws an inset bevel border (dark top/left, light bottom/right).
-fn draw_bevel_border(painter: &Painter, rect: Rect, width: f32, dark: Color32, light: Color32) {
-    painter.line_segment(
-        [rect.left_top(), rect.right_top()],
-        Stroke::new(width, dark),
-    );
-    painter.line_segment(
-        [rect.left_top(), rect.left_bottom()],
-        Stroke::new(width, dark),
-    );
-    painter.line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(width, light),
-    );
-    painter.line_segment(
-        [rect.right_top(), rect.right_bottom()],
-        Stroke::new(width, light),
-    );
+fn draw_bevel_border(
+    painter: &Painter,
+    rect: Rect,
+    width: f32,
+    dark: Color32,
+    light: Color32,
+) {
+    painter.line_segment([rect.left_top(), rect.right_top()], Stroke::new(width, dark));
+    painter.line_segment([rect.left_top(), rect.left_bottom()], Stroke::new(width, dark));
+    painter.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(width, light));
+    painter.line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(width, light));
 }
 
 /// Draws a beveled rectangle with outer bevel and optional inner shadow.
@@ -205,39 +153,19 @@ fn draw_beveled_rect(painter: &Painter, rect: Rect, bg: Color32, pressed: bool) 
 // Button helpers
 // =============================================================================
 
-/// Allocate a region with click sense and return (rect, clicked, pressed).
-fn transport_button(ui: &mut Ui, size: Vec2) -> (Rect, bool, bool) {
+/// Allocate a region, paint an image, and return the response + pressed state.
+#[allow(dead_code)]
+fn image_button(
+    ui: &mut Ui,
+    size: Vec2,
+    normal: impl Into<egui::ImageSource<'static>>,
+    pressed: impl Into<egui::ImageSource<'static>>,
+) -> (Response, bool) {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    (rect, resp.clicked(), resp.is_pointer_button_down_on())
-}
-
-/// Draws an info badge with bevel border and centered text.
-fn draw_info_badge(painter: &Painter, rect: Rect, text: &str) {
-    let dark = Color32::from_rgb(6, 18, 6);
-    painter.rect_filled(rect, CornerRadius::ZERO, INFO_BADGE_BG);
-    painter.line_segment(
-        [rect.left_top(), rect.right_top()],
-        Stroke::new(BEVEL_WIDTH, dark),
-    );
-    painter.line_segment(
-        [rect.left_top(), rect.left_bottom()],
-        Stroke::new(BEVEL_WIDTH, dark),
-    );
-    painter.line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT),
-    );
-    painter.line_segment(
-        [rect.right_top(), rect.right_bottom()],
-        Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT),
-    );
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        egui::FontId::new(12.0, FontFamily::Name("04b03".into())),
-        LCD_SEG_ON,
-    );
+    let is_pressed = resp.is_pointer_button_down_on();
+    let src = if is_pressed { pressed.into() } else { normal.into() };
+    egui::Image::new(src).paint_at(ui, rect);
+    (resp, is_pressed)
 }
 
 // =============================================================================
@@ -253,7 +181,6 @@ struct SevenSegDigit {
     vert_w: f32,
     vert_h: f32,
     gap: f32,
-    polygon_cache: [Vec<Pos2>; 7],
 }
 
 impl SevenSegDigit {
@@ -280,55 +207,48 @@ impl SevenSegDigit {
             vert_w: 2.0,
             vert_h: 13.0,
             gap: 1.0,
-            polygon_cache: Self::calculate_polygons(x, y),
         }
     }
 
-    fn calculate_polygons(x: f32, y: f32) -> [Vec<Pos2>; 7] {
+    fn draw(&self, painter: &Painter) {
         let h_seg = |x: f32, y: f32| -> Vec<Pos2> {
             vec![
                 Pos2::new(x, y),
-                Pos2::new(x + 14.0, y),
-                Pos2::new(x + 14.0, y + 3.0),
-                Pos2::new(x, y + 3.0),
+                Pos2::new(x + self.seg_w, y),
+                Pos2::new(x + self.seg_w, y + self.seg_h),
+                Pos2::new(x, y + self.seg_h),
             ]
         };
         let v_seg = |x: f32, y: f32| -> Vec<Pos2> {
             vec![
                 Pos2::new(x, y),
-                Pos2::new(x + 2.0, y),
-                Pos2::new(x + 2.0, y + 13.0),
-                Pos2::new(x, y + 13.0),
+                Pos2::new(x + self.vert_w, y),
+                Pos2::new(x + self.vert_w, y + self.vert_h),
+                Pos2::new(x, y + self.vert_h),
             ]
         };
 
-        let top_h_y = y;
-        let top_v_y = top_h_y + 3.0 + 1.0;
-        let mid_h_y = top_v_y + 13.0 + 1.0;
-        let bottom_v_y = mid_h_y + 3.0 + 1.0;
-        let bottom_h_y = bottom_v_y + 13.0 + 1.0;
-        let left_x = x;
-        let right_x = x + 14.0 + 2.0;
+        let top_h_y = self.y;
+        let top_v_y = top_h_y + self.seg_h + self.gap;
+        let mid_h_y = top_v_y + self.vert_h + self.gap;
+        let bottom_v_y = mid_h_y + self.seg_h + self.gap;
+        let bottom_h_y = bottom_v_y + self.vert_h + self.gap;
+        let left_x = self.x;
+        let right_x = self.x + self.seg_w + 2.0;
 
-        [
-            h_seg(x + 2.0, top_h_y),
+        let polys = [
+            h_seg(self.x + 2.0, top_h_y),
             v_seg(left_x, top_v_y),
             v_seg(right_x, top_v_y),
-            h_seg(x + 2.0, mid_h_y),
+            h_seg(self.x + 2.0, mid_h_y),
             v_seg(left_x, bottom_v_y),
             v_seg(right_x, bottom_v_y),
-            h_seg(x + 2.0, bottom_h_y),
-        ]
-    }
+            h_seg(self.x + 2.0, bottom_h_y),
+        ];
 
-    fn draw(&self, painter: &Painter) {
         for (i, &active) in self.segments.iter().enumerate() {
             let color = if active { LCD_SEG_ON } else { LCD_SEG_OFF };
-            painter.add(Shape::convex_polygon(
-                self.polygon_cache[i].clone(),
-                color,
-                Stroke::NONE,
-            ));
+            painter.add(Shape::convex_polygon(polys[i].clone(), color, Stroke::NONE));
         }
     }
 }
@@ -362,12 +282,10 @@ impl SpectrumState {
             }
             return;
         }
-        let raw: Vec<f32> = {
-            let guard = GLOBAL_SPECTRUM.read().unwrap();
-            guard.iter().take(N_SPECTRUM_BARS).copied().collect()
-        };
+        let raw = GLOBAL_SPECTRUM.read().unwrap();
+        let n = raw.len().min(N_SPECTRUM_BARS);
         for i in 0..N_SPECTRUM_BARS {
-            let t = raw.get(i).copied().unwrap_or(0.0);
+            let t = if i < n { raw[i] } else { 0.0 };
             let c = self.smoothed[i];
             self.smoothed[i] = if t > c {
                 (c + 0.22 * (t - c)).min(1.0)
@@ -393,8 +311,6 @@ impl SpectrumState {
 struct ScrollingTitle {
     offset: f32,
     last_update: Instant,
-    cached_text: String,
-    cached_formatted: String,
 }
 
 impl ScrollingTitle {
@@ -402,8 +318,6 @@ impl ScrollingTitle {
         Self {
             offset: 0.0,
             last_update: Instant::now(),
-            cached_text: String::new(),
-            cached_formatted: String::new(),
         }
     }
 
@@ -416,13 +330,10 @@ impl ScrollingTitle {
         }
     }
 
-    fn draw(&mut self, painter: &Painter, rect: Rect, text: &str, color: Color32) {
-        if text != self.cached_text {
-            self.cached_text = text.to_string();
-            self.cached_formatted = format!("  {}  ", text);
-        }
+    fn draw(&self, painter: &Painter, rect: Rect, text: &str, color: Color32) {
         let font_id = egui::FontId::new(16.0, FontFamily::Name("04b03".into()));
-        let galley = painter.layout_no_wrap(self.cached_formatted.clone(), font_id.clone(), color);
+        let full_text = format!("  {}  ", text);
+        let galley = painter.layout_no_wrap(full_text.clone(), font_id.clone(), color);
         let full_width = galley.size().x;
         let painter = painter.with_clip_rect(rect);
         let x_start = rect.left() - self.offset;
@@ -433,10 +344,7 @@ impl ScrollingTitle {
         );
         if x_start + full_width < rect.right() {
             painter.galley(
-                Pos2::new(
-                    x_start + full_width,
-                    rect.center().y - galley.size().y / 2.0,
-                ),
+                Pos2::new(x_start + full_width, rect.center().y - galley.size().y / 2.0),
                 galley,
                 color,
             );
@@ -449,12 +357,11 @@ impl ScrollingTitle {
 // =============================================================================
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct EngineSnapshot {
     pub state: PlaybackState,
     pub position: PlaybackPosition,
-    #[allow(dead_code)]
     pub buffer: DownloadBuffer,
-    #[allow(dead_code)]
     pub can_seek: bool,
     pub load_error: String,
     pub meta_title: String,
@@ -470,14 +377,8 @@ impl EngineSnapshot {
             buffer: engine.get_download_buffer(),
             can_seek: engine.source_supports(Capability::Seek),
             load_error: engine.load_error(),
-            meta_title: info
-                .as_ref()
-                .and_then(|i| i.title.clone())
-                .unwrap_or_default(),
-            meta_artist: info
-                .as_ref()
-                .and_then(|i| i.artist.clone())
-                .unwrap_or_default(),
+            meta_title: info.as_ref().and_then(|i| i.title.clone()).unwrap_or_default(),
+            meta_artist: info.as_ref().and_then(|i| i.artist.clone()).unwrap_or_default(),
         }
     }
 }
@@ -500,9 +401,7 @@ impl ScrubState {
     fn commit(&mut self) -> Option<u64> {
         if self.active {
             self.active = false;
-            let ms = self.position_ms;
-            self.position_ms = 0;
-            Some(ms)
+            Some(std::mem::take(&mut self.position_ms))
         } else {
             None
         }
@@ -513,7 +412,12 @@ impl ScrubState {
 // Slider / Thumb
 // =============================================================================
 
-fn draw_slider(ui: &mut Ui, resp: &Response, value: f32, fill_color: Color32) -> Option<f32> {
+fn draw_slider(
+    ui: &mut Ui,
+    resp: &Response,
+    value: f32,
+    fill_color: Color32,
+) -> Option<f32> {
     let rect = resp.rect;
     let painter = ui.painter();
     let track_rect = rect.shrink2(Vec2::new(0.0, 4.0));
@@ -577,7 +481,10 @@ fn draw_winamp_thumb(painter: &Painter, rect: Rect, pressed: bool) {
 fn draw_timer(painter: &Painter, origin: Pos2, time_str: &str, with_minus: bool) {
     let mut x = origin.x + 15.0;
     if with_minus {
-        let mr = Rect::from_min_size(Pos2::new(origin.x, origin.y + 18.0), Vec2::new(12.0, 5.0));
+        let mr = Rect::from_min_size(
+            Pos2::new(origin.x, origin.y + 18.0),
+            Vec2::new(12.0, 5.0),
+        );
         painter.rect_filled(mr, CornerRadius::same(2), LCD_SEG_ON);
     }
     for ch in time_str.chars() {
@@ -626,7 +533,6 @@ fn draw_spectrum(
         return;
     }
     let bars_rect = rect.shrink2(Vec2::new(5.0, 5.0));
-    let bar_h = bars_rect.height();
     let gap = 1.0;
     let n = N_SPECTRUM_BARS as f32;
     let bar_w = ((bars_rect.width() - (n - 1.0) * gap) / n)
@@ -648,14 +554,15 @@ fn draw_spectrum(
         let bx = start_x + i as f32 * (bar_w + gap);
         for (z_lo, z_hi, color) in &zones {
             if amp > *z_lo {
-                let z_top = bars_rect.bottom() - (amp.min(*z_hi) * bar_h);
-                let z_bot = bars_rect.bottom() - (*z_lo * bar_h);
-                let z_rect = Rect::from_min_max(Pos2::new(bx, z_top), Pos2::new(bx + bar_w, z_bot));
+                let z_top = bars_rect.bottom() - (amp.min(*z_hi) * bars_rect.height());
+                let z_bot = bars_rect.bottom() - *z_lo * bars_rect.height();
+                let z_rect =
+                    Rect::from_min_max(Pos2::new(bx, z_top), Pos2::new(bx + bar_w, z_bot));
                 lcd_painter.rect_filled(z_rect, CornerRadius::ZERO, *color);
             }
         }
         if peak > 0.02 {
-            let py = bars_rect.bottom() - peak * bar_h - 2.0;
+            let py = bars_rect.bottom() - peak * bars_rect.height() - 2.0;
             lcd_painter.line_segment(
                 [Pos2::new(bx, py), Pos2::new(bx + bar_w, py)],
                 Stroke::new(2.0, PEAK_WHITE),
@@ -678,7 +585,13 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
 }
 
 /// Horizontal gradient: dark → mid → dark (left to right)
-fn paint_h_gradient(painter: &Painter, rect: Rect, dark: Color32, mid: Color32, steps: usize) {
+fn paint_h_gradient(
+    painter: &Painter,
+    rect: Rect,
+    dark: Color32,
+    mid: Color32,
+    steps: usize,
+) {
     let n = steps.max(2);
     for i in 0..n {
         let t = i as f32 / (n - 1) as f32;
@@ -787,7 +700,8 @@ struct WinampTestApp {
     eq_on: bool,
     pl_on: bool,
     url: String,
-    error: Option<String>,
+    error: String,
+    loaders_installed: bool,
     show_remaining: bool,
 }
 
@@ -800,42 +714,23 @@ impl WinampTestApp {
         }
         let snap = EngineSnapshot::capture(&engine.lock().unwrap());
         Self {
-            engine,
-            snap,
-            scrub: ScrubState::default(),
-            spectrum: SpectrumState::new(),
-            scrolling: ScrollingTitle::new(),
-            volume: 0.8,
-            balance: 0.5,
-            shuffle: false,
-            repeat: false,
-            eq_on: false,
-            pl_on: false,
-            url,
-            error: None,
-            show_remaining: false,
+            engine, snap, scrub: ScrubState::default(), spectrum: SpectrumState::new(),
+            scrolling: ScrollingTitle::new(), volume: 0.8, balance: 0.5,
+            shuffle: false, repeat: false, eq_on: false, pl_on: false,
+            url, error: String::new(),
+            loaders_installed: false, show_remaining: false,
         }
     }
     fn poll_engine(&mut self) {
-        let snap = {
-            let e = self.engine.lock().unwrap();
-            EngineSnapshot::capture(&e)
-        };
-        if !snap.load_error.is_empty() {
-            self.error = Some(snap.load_error.clone());
-        }
+        let snap = { let e = self.engine.lock().unwrap(); EngineSnapshot::capture(&e) };
+        if !snap.load_error.is_empty() { self.error = snap.load_error.clone(); }
         self.snap = snap;
     }
-    fn total_ms(&self) -> u64 {
-        self.snap.position.total_ms
-    }
-    fn current_ms(&self) -> u64 {
-        self.snap.position.current_ms
-    }
+    fn total_ms(&self) -> u64 { self.snap.position.total_ms }
+    fn current_ms(&self) -> u64 { self.snap.position.current_ms }
     fn is_playing(&self) -> bool {
         matches!(self.snap.state, PlaybackState::Playing)
-            && !(self.snap.position.total_ms > 0
-                && self.snap.position.current_ms >= self.snap.position.total_ms.saturating_sub(500))
+            && !(self.snap.position.total_ms > 0 && self.snap.position.current_ms >= self.snap.position.total_ms.saturating_sub(500))
     }
 }
 
@@ -845,6 +740,10 @@ impl WinampTestApp {
 
 impl eframe::App for WinampTestApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        if !self.loaders_installed {
+            egui_extras::install_image_loaders(ui.ctx());
+            self.loaders_installed = true;
+        }
         self.poll_engine();
         let now = Instant::now();
         let is_playing = self.is_playing();
@@ -852,88 +751,53 @@ impl eframe::App for WinampTestApp {
         self.scrolling.update(now);
         ui.ctx().request_repaint_after(Duration::from_millis(33));
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show_inside(ui, |ui| {
-                let bg_rect = ui.available_rect_before_wrap();
-                paint_h_gradient(ui.painter(), bg_rect, BODY_DARK, BODY_MID, 64);
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| {
+            let bg_rect = ui.available_rect_before_wrap();
+            paint_h_gradient(ui.painter(), bg_rect, BODY_DARK, BODY_MID, 64);
 
-                let avail = ui.available_width();
-                let x_off = ((avail - WIN_W) / 2.0).max(0.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(x_off);
-                    ui.vertical(|ui| {
-                        ui.set_min_width(WIN_W);
-                        ui.set_max_width(WIN_W);
-                        self.render_title_bar(ui);
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin {
-                                left: BORDER_PAD,
-                                right: BORDER_PAD,
-                                top: BORDER_PAD,
-                                bottom: BORDER_PAD,
-                            })
-                            .show(ui, |ui| {
-                                self.render_main_body(ui);
-                                self.render_bottom_strip(ui);
-                            });
-                    });
+            let avail = ui.available_width();
+            let x_off = ((avail - WIN_W) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(x_off);
+                ui.vertical(|ui| {
+                    ui.set_min_width(WIN_W);
+                    ui.set_max_width(WIN_W);
+                    self.render_title_bar(ui);
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin { left: BORDER_PAD, right: BORDER_PAD, top: BORDER_PAD, bottom: BORDER_PAD })
+                        .show(ui, |ui| {
+                            self.render_main_body(ui);
+                            self.render_bottom_strip(ui);
+                        });
                 });
-
-                let logo_size = Vec2::new(34.0, 34.0);
-                let controls_bar_y = bg_rect.top()
-                    + TITLE_BAR_H
-                    + BORDER_PAD as f32
-                    + BODY_PAD_TOP
-                    + LCD_H
-                    + GAP
-                    + SEEK_BAR_H
-                    + GAP;
-                let logo_y = controls_bar_y + (CONTROLS_BAR_H - logo_size.y) / 2.0 + LOGO_V_OFFSET;
-                let logo_pos = Pos2::new(
-                    bg_rect.left() + x_off + WIN_W - BORDER_PAD as f32 - BODY_PAD_LR - logo_size.x,
-                    logo_y,
-                );
-                let logo_rect = Rect::from_min_size(logo_pos, logo_size);
-                ui.put(
-                    logo_rect,
-                    egui::Image::new(egui::include_image!("../assets/logo-rustamp.png")),
-                );
-
-                // L-borders around the full body (everything below title bar)
-                let painter = ui.painter();
-                let inset = 2.0;
-                let pad_lr = 8.0;
-                let pad_bot = 8.0;
-                let b = Rect::from_min_max(
-                    Pos2::new(
-                        bg_rect.left() + x_off + pad_lr,
-                        bg_rect.top() + TITLE_BAR_H + inset,
-                    ),
-                    Pos2::new(
-                        bg_rect.left() + x_off + WIN_W - pad_lr,
-                        bg_rect.bottom() - pad_bot,
-                    ),
-                );
-                let gap = L_BORDER_GAP;
-                let l_gray = Color32::from_rgb(107, 107, 122);
-                let stroke = Stroke::new(1.5, l_gray);
-                // Top-left L (top + left meet at top-left corner)
-                painter.line_segment([b.left_top(), Pos2::new(b.right() - gap, b.top())], stroke);
-                painter.line_segment(
-                    [b.left_top(), Pos2::new(b.left(), b.bottom() - gap)],
-                    stroke,
-                );
-                // Bottom-right L (bottom + right meet at bottom-right corner)
-                painter.line_segment(
-                    [Pos2::new(b.left() + gap, b.bottom()), b.right_bottom()],
-                    stroke,
-                );
-                painter.line_segment(
-                    [Pos2::new(b.right(), b.top() + gap), b.right_bottom()],
-                    stroke,
-                );
             });
+
+            let logo_size = Vec2::new(34.0, 34.0);
+            let controls_bar_y = bg_rect.top() + TITLE_BAR_H + BORDER_PAD as f32 + BODY_PAD_TOP + LCD_H + GAP + SEEK_BAR_H + GAP;
+            let logo_y = controls_bar_y + (CONTROLS_BAR_H - logo_size.y) / 2.0 + 10.0;
+            let logo_pos = Pos2::new(bg_rect.left() + x_off + WIN_W - BORDER_PAD as f32 - BODY_PAD_LR - logo_size.x, logo_y);
+            let logo_rect = Rect::from_min_size(logo_pos, logo_size);
+            ui.put(logo_rect, egui::Image::new(egui::include_image!("../assets/logo-rustamp.png")));
+
+            // L-borders around the full body (everything below title bar)
+            let painter = ui.painter();
+            let inset = 2.0;
+            let pad_lr = 8.0;
+            let pad_bot = 8.0;
+            let b = Rect::from_min_max(
+                Pos2::new(bg_rect.left() + x_off + pad_lr, bg_rect.top() + TITLE_BAR_H + inset),
+                Pos2::new(bg_rect.left() + x_off + WIN_W - pad_lr, bg_rect.bottom() - pad_bot),
+            );
+            let gap = 4.0;
+            let l_gray = Color32::from_rgb(107, 107, 122);
+            let stroke = Stroke::new(1.5, l_gray);
+            // Top-left L (top + left meet at top-left corner)
+            painter.line_segment([b.left_top(), Pos2::new(b.right() - gap, b.top())], stroke);
+            painter.line_segment([b.left_top(), Pos2::new(b.left(), b.bottom() - gap)], stroke);
+            // Bottom-right L (bottom + right meet at bottom-right corner)
+            painter.line_segment([Pos2::new(b.left() + gap, b.bottom()), b.right_bottom()], stroke);
+            painter.line_segment([Pos2::new(b.right(), b.top() + gap), b.right_bottom()], stroke);
+        });
 
         ui.input(|i| {
             if i.key_pressed(egui::Key::Space) {
@@ -944,22 +808,16 @@ impl eframe::App for WinampTestApp {
                     _ => {}
                 }
             }
-            if i.key_pressed(egui::Key::S) {
-                self.engine.lock().unwrap().stop();
-            }
+            if i.key_pressed(egui::Key::S) { self.engine.lock().unwrap().stop(); }
             let total = self.total_ms();
             if total > 0 {
                 let cur = self.current_ms();
                 if i.key_pressed(egui::Key::ArrowLeft) {
-                    if !self.scrub.active {
-                        self.scrub.enter(cur);
-                    }
+                    if !self.scrub.active { self.scrub.enter(cur); }
                     self.scrub.position_ms = self.scrub.position_ms.saturating_sub(1000);
                 }
                 if i.key_pressed(egui::Key::ArrowRight) {
-                    if !self.scrub.active {
-                        self.scrub.enter(cur);
-                    }
+                    if !self.scrub.active { self.scrub.enter(cur); }
                     self.scrub.position_ms = (self.scrub.position_ms + 1000).min(total);
                 }
             }
@@ -968,9 +826,7 @@ impl eframe::App for WinampTestApp {
                     let _ = self.engine.lock().unwrap().seek(ms);
                 }
             }
-            if i.key_pressed(egui::Key::Escape) {
-                self.scrub.cancel();
-            }
+            if i.key_pressed(egui::Key::Escape) { self.scrub.cancel(); }
         });
     }
 }
@@ -987,13 +843,9 @@ impl WinampTestApp {
 
         let menu_center = Pos2::new(rect.left() + 18.0, rect.top() + 11.0);
         let menu_r = Rect::from_center_size(menu_center, Vec2::new(20.0, 18.0));
-        let menu_resp = ui.put(
-            menu_r,
-            egui::Image::new(egui::include_image!("../assets/menu.png")).sense(Sense::click()),
-        );
+        let menu_resp = ui.put(menu_r, egui::Image::new(egui::include_image!("../assets/menu.png")).sense(Sense::click()));
         if menu_resp.is_pointer_button_down_on() {
-            egui::Image::new(egui::include_image!("../assets/menu_pressed.png"))
-                .paint_at(ui, menu_r);
+            egui::Image::new(egui::include_image!("../assets/menu_pressed.png")).paint_at(ui, menu_r);
         }
 
         let right = rect.right();
@@ -1001,28 +853,19 @@ impl WinampTestApp {
         let btn_y = rect.top() + (rect.height() - btn_size.y) / 2.0;
 
         let min_r = Rect::from_min_size(Pos2::new(right - 3.0 * btn_size.x - 1.0, btn_y), btn_size);
-        let min_resp = ui.put(
-            min_r,
-            egui::Image::new(egui::include_image!("../assets/min.png")).sense(Sense::click()),
-        );
+        let min_resp = ui.put(min_r, egui::Image::new(egui::include_image!("../assets/min.png")).sense(Sense::click()));
         if min_resp.is_pointer_button_down_on() {
             egui::Image::new(egui::include_image!("../assets/min_pressed.png")).paint_at(ui, min_r);
         }
 
         let max_r = Rect::from_min_size(Pos2::new(right - 2.0 * btn_size.x - 2.0, btn_y), btn_size);
-        let max_resp = ui.put(
-            max_r,
-            egui::Image::new(egui::include_image!("../assets/max.png")).sense(Sense::click()),
-        );
+        let max_resp = ui.put(max_r, egui::Image::new(egui::include_image!("../assets/max.png")).sense(Sense::click()));
         if max_resp.is_pointer_button_down_on() {
             egui::Image::new(egui::include_image!("../assets/max_pressed.png")).paint_at(ui, max_r);
         }
 
         let close_r = Rect::from_min_size(Pos2::new(right - btn_size.x - 4.0, btn_y), btn_size);
-        let close_resp = ui.put(
-            close_r,
-            egui::Image::new(egui::include_image!("../assets/close.png")).sense(Sense::click()),
-        );
+        let close_resp = ui.put(close_r, egui::Image::new(egui::include_image!("../assets/close.png")).sense(Sense::click()));
 
         let painter = ui.painter();
 
@@ -1047,70 +890,32 @@ impl WinampTestApp {
 
         let text = "WINAMP";
         let font_id = egui::FontId::new(12.0, FontFamily::Monospace);
-        painter.text(
-            rect.center() + egui::vec2(-0.5, 0.0),
-            Align2::CENTER_CENTER,
-            text,
-            font_id.clone(),
-            TITLE_TEXT,
-        );
-        painter.text(
-            rect.center() + egui::vec2(0.5, 0.0),
-            Align2::CENTER_CENTER,
-            text,
-            font_id,
-            TITLE_TEXT,
-        );
+        painter.text(rect.center() + egui::vec2(-0.5, 0.0), Align2::CENTER_CENTER, text, font_id.clone(), TITLE_TEXT);
+        painter.text(rect.center() + egui::vec2(0.5, 0.0), Align2::CENTER_CENTER, text, font_id, TITLE_TEXT);
 
-        if drag_resp.drag_started() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
+        if drag_resp.drag_started() { ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag); }
         if min_resp.clicked() { /* TODO: minimize to compact player */ }
-        if max_resp.clicked() {
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::WindowLevel(WindowLevel::AlwaysOnTop));
-        }
-        if close_resp.clicked() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+        if max_resp.clicked() { ui.ctx().send_viewport_cmd(egui::ViewportCommand::WindowLevel(WindowLevel::AlwaysOnTop)); }
+        if close_resp.clicked() { ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close); }
         if menu_resp.clicked() { /* TODO: open menu */ }
     }
 
     fn render_main_body(&mut self, ui: &mut Ui) {
         ui.add_space(BODY_PAD_TOP);
         egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: BODY_PAD_LR as i8,
-                right: BODY_PAD_LR as i8,
-                top: 0,
-                bottom: 0,
-            })
+            .inner_margin(egui::Margin { left: BODY_PAD_LR as i8, right: BODY_PAD_LR as i8, top: 0, bottom: 0 })
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    self.render_lcd_panel(ui);
-                    ui.add_space(METADATA_GAP);
-                    self.render_metadata_panel(ui);
-                });
+                ui.horizontal(|ui| { self.render_lcd_panel(ui); ui.add_space(METADATA_GAP); self.render_metadata_panel(ui); });
             });
         ui.add_space(GAP);
         egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: BODY_PAD_LR as i8,
-                right: BODY_PAD_LR as i8,
-                top: 0,
-                bottom: 0,
-            })
+            .inner_margin(egui::Margin { left: BODY_PAD_LR as i8, right: BODY_PAD_LR as i8, top: 0, bottom: 0 })
             .show(ui, |ui| {
                 self.render_seek_bar(ui);
             });
         ui.add_space(GAP);
         egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: BODY_PAD_LR as i8,
-                right: BODY_PAD_LR as i8,
-                top: 0,
-                bottom: 0,
-            })
+            .inner_margin(egui::Margin { left: BODY_PAD_LR as i8, right: BODY_PAD_LR as i8, top: 0, bottom: 0 })
             .show(ui, |ui| {
                 self.render_controls_bar(ui);
             });
@@ -1121,15 +926,13 @@ impl WinampTestApp {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(LCD_W, LCD_H), Sense::hover());
         let painter = ui.painter();
         painter.rect_filled(rect, CornerRadius::ZERO, LCD_BG);
-        draw_bevel_border(
-            painter,
-            rect,
-            BEVEL_WIDTH,
-            Color32::from_rgb(6, 18, 6),
-            BEVEL_LIGHT,
-        );
+        let dark_edge = Color32::from_rgb(6, 18, 6);
+        painter.line_segment([rect.left_top(), rect.right_top()], Stroke::new(BEVEL_WIDTH, dark_edge));
+        painter.line_segment([rect.left_top(), rect.left_bottom()], Stroke::new(BEVEL_WIDTH, dark_edge));
+        painter.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+        painter.line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
 
-        let cell = LCD_GRID_CELL;
+        let cell = 4.0;
         let dot_r = 1.0;
         let mut y = rect.top() + cell / 2.0;
         while y < rect.bottom() {
@@ -1141,41 +944,20 @@ impl WinampTestApp {
             y += cell;
         }
 
-        let icon_rect = Rect::from_min_size(
-            Pos2::new(rect.left() + 18.0, rect.top() + 6.0),
-            Vec2::new(16.0, 22.0),
-        );
+        let icon_rect = Rect::from_min_size(Pos2::new(rect.left() + 18.0, rect.top() + 6.0), Vec2::new(16.0, 22.0));
         match self.snap.state {
             PlaybackState::Playing => {
-                painter.add(Shape::convex_polygon(
-                    vec![
-                        Pos2::new(icon_rect.left(), icon_rect.top()),
-                        Pos2::new(icon_rect.left(), icon_rect.bottom()),
-                        Pos2::new(icon_rect.right(), icon_rect.center().y),
-                    ],
-                    LCD_SEG_ON,
-                    Stroke::NONE,
-                ));
+                painter.add(Shape::convex_polygon(vec![
+                    Pos2::new(icon_rect.left(), icon_rect.top()),
+                    Pos2::new(icon_rect.left(), icon_rect.bottom()),
+                    Pos2::new(icon_rect.right(), icon_rect.center().y),
+                ], LCD_SEG_ON, Stroke::NONE));
             }
             PlaybackState::Paused => {
                 let bar_w = 4.0;
                 let gap = 2.0;
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(icon_rect.left(), icon_rect.top()),
-                        Vec2::new(bar_w, icon_rect.height()),
-                    ),
-                    CornerRadius::ZERO,
-                    LCD_SEG_ON,
-                );
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(icon_rect.left() + bar_w + gap, icon_rect.top()),
-                        Vec2::new(bar_w, icon_rect.height()),
-                    ),
-                    CornerRadius::ZERO,
-                    LCD_SEG_ON,
-                );
+                painter.rect_filled(Rect::from_min_size(Pos2::new(icon_rect.left(), icon_rect.top()), Vec2::new(bar_w, icon_rect.height())), CornerRadius::ZERO, LCD_SEG_ON);
+                painter.rect_filled(Rect::from_min_size(Pos2::new(icon_rect.left() + bar_w + gap, icon_rect.top()), Vec2::new(bar_w, icon_rect.height())), CornerRadius::ZERO, LCD_SEG_ON);
             }
             _ => {
                 painter.rect_filled(icon_rect, CornerRadius::same(1), LCD_SEG_ON);
@@ -1184,7 +966,7 @@ impl WinampTestApp {
 
         // Timer toggle on click
         let timer_area = Rect::from_min_max(
-            Pos2::new(rect.left() + TIMER_LEFT_OFFSET, rect.top()),
+            Pos2::new(rect.left() + 22.0, rect.top()),
             Pos2::new(rect.left() + 180.0, rect.top() + 50.0),
         );
         let timer_resp = ui.interact(timer_area, egui::Id::new("timer_toggle"), Sense::click());
@@ -1193,13 +975,7 @@ impl WinampTestApp {
         }
 
         let label = if self.show_remaining { "REM" } else { "CUR" };
-        painter.text(
-            Pos2::new(rect.left() + 28.0, rect.top() + 6.0),
-            Align2::LEFT_TOP,
-            label,
-            egui::FontId::new(8.0, FontFamily::Monospace),
-            LCD_SEG_OFF,
-        );
+        painter.text(Pos2::new(rect.left() + 28.0, rect.top() + 6.0), Align2::LEFT_TOP, label, egui::FontId::new(8.0, FontFamily::Monospace), LCD_SEG_OFF);
 
         let timer_origin = Pos2::new(rect.left() + 46.0, rect.top() + 5.0);
         let total = self.total_ms();
@@ -1211,91 +987,63 @@ impl WinampTestApp {
         };
         draw_timer(painter, timer_origin, &time_str, with_minus);
 
-        let spec_rect = Rect::from_min_max(
-            Pos2::new(rect.left() + 18.0, rect.top() + SPECTRUM_TOP_OFFSET),
-            Pos2::new(rect.right() - 5.0, rect.bottom() - 5.0),
-        );
+        let spec_rect = Rect::from_min_max(Pos2::new(rect.left() + 18.0, rect.top() + SPECTRUM_TOP_OFFSET), Pos2::new(rect.right() - 5.0, rect.bottom() - 5.0));
         draw_spectrum(painter, spec_rect, rect, &self.spectrum, self.is_playing());
     }
 
     fn render_metadata_panel(&mut self, ui: &mut Ui) {
         ui.vertical(|ui| {
-            let title_rect = ui
-                .allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover())
-                .0;
+            let title_rect = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover()).0;
             let painter = ui.painter();
             painter.rect_filled(title_rect, CornerRadius::ZERO, INFO_BADGE_BG);
-            draw_bevel_border(
-                painter,
-                title_rect,
-                BEVEL_WIDTH,
-                Color32::from_rgb(6, 18, 6),
-                BEVEL_LIGHT,
-            );
+            let dark_edge = Color32::from_rgb(6, 18, 6);
+            painter.line_segment([title_rect.left_top(), title_rect.right_top()], Stroke::new(BEVEL_WIDTH, dark_edge));
+            painter.line_segment([title_rect.left_top(), title_rect.left_bottom()], Stroke::new(BEVEL_WIDTH, dark_edge));
+            painter.line_segment([title_rect.left_bottom(), title_rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+            painter.line_segment([title_rect.right_top(), title_rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
             let display = if !self.snap.meta_artist.is_empty() || !self.snap.meta_title.is_empty() {
                 format!("{} - {}", self.snap.meta_artist, self.snap.meta_title)
             } else {
                 self.url.clone()
             };
-            let title_text = if let Some(err) = &self.error {
-                err.clone()
-            } else if self.url.is_empty() {
-                "Winamp Classic 2.x".to_string()
-            } else {
-                display
-            };
-            let title_color = if self.error.is_some() {
-                STATE_RED
-            } else {
-                LCD_SEG_ON
-            };
-            self.scrolling
-                .draw(painter, title_rect, &title_text, title_color);
+            let title_text = if !self.error.is_empty() { self.error.clone() } else if self.url.is_empty() { "Winamp Classic 2.x".to_string() } else { display };
+            let title_color = if !self.error.is_empty() { STATE_RED } else { LCD_SEG_ON };
+            self.scrolling.draw(painter, title_rect, &title_text, title_color);
             ui.add_space(4.0);
 
-            let row_rect = ui
-                .allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover())
-                .0;
+            let row_rect = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover()).0;
             let rp = ui.painter();
             let mut x = row_rect.left();
             let y = row_rect.center().y;
             let box_h = 16.0;
 
-            let val_rect = Rect::from_min_size(
-                Pos2::new(x, row_rect.center().y - box_h / 2.0),
-                Vec2::new(30.0, box_h),
-            );
-            draw_info_badge(rp, val_rect, "256");
-            x = val_rect.right() + BADGE_LABEL_GAP;
-            rp.text(
-                Pos2::new(x, y),
-                Align2::LEFT_CENTER,
-                "kbps",
-                egui::FontId::new(14.0, FontFamily::Name("04b03".into())),
-                Color32::WHITE,
-            );
-            x += BADGE_STRIDE;
+            let val_rect = Rect::from_min_size(Pos2::new(x, row_rect.center().y - box_h / 2.0), Vec2::new(30.0, box_h));
+            rp.rect_filled(val_rect, CornerRadius::ZERO, INFO_BADGE_BG);
+            rp.line_segment([val_rect.left_top(), val_rect.right_top()], Stroke::new(BEVEL_WIDTH, Color32::from_rgb(6, 18, 6)));
+            rp.line_segment([val_rect.left_top(), val_rect.left_bottom()], Stroke::new(BEVEL_WIDTH, Color32::from_rgb(6, 18, 6)));
+            rp.line_segment([val_rect.left_bottom(), val_rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+            rp.line_segment([val_rect.right_top(), val_rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+            rp.text(val_rect.center(), Align2::CENTER_CENTER, "256", egui::FontId::new(12.0, FontFamily::Name("04b03".into())), LCD_SEG_ON);
+            x = val_rect.right() + 4.0;
+            rp.text(Pos2::new(x, y), Align2::LEFT_CENTER, "kbps", egui::FontId::new(14.0, FontFamily::Name("04b03".into())), Color32::WHITE);
+            x += 41.0;
 
-            let val_rect = Rect::from_min_size(
-                Pos2::new(x, row_rect.center().y - box_h / 2.0),
-                Vec2::new(24.0, box_h),
-            );
-            draw_info_badge(rp, val_rect, "44");
-            x = val_rect.right() + BADGE_LABEL_GAP;
-            rp.text(
-                Pos2::new(x, y),
-                Align2::LEFT_CENTER,
-                "kHz",
-                egui::FontId::new(12.0, FontFamily::Name("04b03".into())),
-                Color32::WHITE,
-            );
+            let val_rect = Rect::from_min_size(Pos2::new(x, row_rect.center().y - box_h / 2.0), Vec2::new(24.0, box_h));
+            rp.rect_filled(val_rect, CornerRadius::ZERO, INFO_BADGE_BG);
+            rp.line_segment([val_rect.left_top(), val_rect.right_top()], Stroke::new(BEVEL_WIDTH, Color32::from_rgb(6, 18, 6)));
+            rp.line_segment([val_rect.left_top(), val_rect.left_bottom()], Stroke::new(BEVEL_WIDTH, Color32::from_rgb(6, 18, 6)));
+            rp.line_segment([val_rect.left_bottom(), val_rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+            rp.line_segment([val_rect.right_top(), val_rect.right_bottom()], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+            rp.text(val_rect.center(), Align2::CENTER_CENTER, "44", egui::FontId::new(12.0, FontFamily::Name("04b03".into())), LCD_SEG_ON);
+            x = val_rect.right() + 4.0;
+            rp.text(Pos2::new(x, y), Align2::LEFT_CENTER, "kHz", egui::FontId::new(12.0, FontFamily::Name("04b03".into())), Color32::WHITE);
 
             let _ = rp;
             let is_stereo = self.is_playing();
-            let img_w = STEREO_IMG_W;
-            let img_h = STEREO_IMG_H;
-            let mono_w = img_w * MONO_IMAGE_SCALE;
-            let mono_h = img_h * MONO_IMAGE_SCALE;
+            let img_w = 42.0;
+            let img_h = 24.0;
+            let mono_w = img_w * 1.05;
+            let mono_h = img_h * 1.05;
             let gap = 0.0;
             let y_off = row_rect.center().y - img_h / 2.0;
             let mono_y_off = row_rect.center().y - mono_h / 2.0;
@@ -1319,63 +1067,33 @@ impl WinampTestApp {
             ui.horizontal(|ui| {
                 ui.style_mut().spacing.item_spacing.x = 0.0;
                 let vc = vol_color(self.volume);
-                let (_, vresp) =
-                    ui.allocate_exact_size(Vec2::new(88.0, 14.0), Sense::click_and_drag());
-                if let Some(new_v) = draw_slider(ui, &vresp, self.volume, vc) {
-                    self.volume = new_v;
-                    self.engine.lock().unwrap().set_volume(new_v);
-                }
+                let (_, vresp) = ui.allocate_exact_size(Vec2::new(88.0, 14.0), Sense::click_and_drag());
+                if let Some(new_v) = draw_slider(ui, &vresp, self.volume, vc) { self.volume = new_v; self.engine.lock().unwrap().set_volume(new_v); }
                 ui.add_space(4.0);
                 let bc = bal_color(self.balance);
-                let (_, bresp) =
-                    ui.allocate_exact_size(Vec2::new(44.0, 14.0), Sense::click_and_drag());
-                if let Some(new_b) = draw_slider(ui, &bresp, self.balance, bc) {
-                    self.balance = new_b;
-                    self.engine.lock().unwrap().set_balance(new_b);
-                }
+                let (_, bresp) = ui.allocate_exact_size(Vec2::new(44.0, 14.0), Sense::click_and_drag());
+                if let Some(new_b) = draw_slider(ui, &bresp, self.balance, bc) { self.balance = new_b; self.engine.lock().unwrap().set_balance(new_b); }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (btn_rect, btn_resp) =
-                        ui.allocate_exact_size(Vec2::new(38.0, 22.0), Sense::click());
+                    let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(38.0, 22.0), Sense::click());
                     let pressed = btn_resp.is_pointer_button_down_on();
                     let pl_src = if self.pl_on {
-                        if pressed {
-                            egui::include_image!("../assets/pl_on_pressed.png")
-                        } else {
-                            egui::include_image!("../assets/pl_on.png")
-                        }
+                        if pressed { egui::include_image!("../assets/pl_on_pressed.png") } else { egui::include_image!("../assets/pl_on.png") }
                     } else {
-                        if pressed {
-                            egui::include_image!("../assets/pl_off_pressed.png")
-                        } else {
-                            egui::include_image!("../assets/pl_off.png")
-                        }
+                        if pressed { egui::include_image!("../assets/pl_off_pressed.png") } else { egui::include_image!("../assets/pl_off.png") }
                     };
                     egui::Image::new(pl_src).paint_at(ui, btn_rect);
-                    if btn_resp.clicked() {
-                        self.pl_on = !self.pl_on;
-                    }
+                    if btn_resp.clicked() { self.pl_on = !self.pl_on; }
 
-                    let (btn_rect, btn_resp) =
-                        ui.allocate_exact_size(Vec2::new(38.0, 22.0), Sense::click());
+                    let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(38.0, 22.0), Sense::click());
                     let pressed = btn_resp.is_pointer_button_down_on();
                     if self.eq_on {
-                        let eq_src = if pressed {
-                            egui::include_image!("../assets/eq_on_pressed.png")
-                        } else {
-                            egui::include_image!("../assets/eq_on.png")
-                        };
+                        let eq_src = if pressed { egui::include_image!("../assets/eq_on_pressed.png") } else { egui::include_image!("../assets/eq_on.png") };
                         egui::Image::new(eq_src).paint_at(ui, btn_rect);
                     } else {
-                        let eq_src = if pressed {
-                            egui::include_image!("../assets/eq_off_pressed.png")
-                        } else {
-                            egui::include_image!("../assets/eq_off.png")
-                        };
+                        let eq_src = if pressed { egui::include_image!("../assets/eq_off_pressed.png") } else { egui::include_image!("../assets/eq_off.png") };
                         egui::Image::new(eq_src).paint_at(ui, btn_rect);
                     }
-                    if btn_resp.clicked() {
-                        self.eq_on = !self.eq_on;
-                    }
+                    if btn_resp.clicked() { self.eq_on = !self.eq_on; }
                 });
             });
         });
@@ -1384,18 +1102,9 @@ impl WinampTestApp {
     fn render_seek_bar(&mut self, ui: &mut Ui) {
         let total = self.total_ms();
         let is_scrubbing = self.scrub.active;
-        let display_ms = if is_scrubbing {
-            self.scrub.position_ms
-        } else {
-            self.current_ms()
-        };
-        let ratio = if total > 0 {
-            (display_ms as f32 / total as f32).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let (rect, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), SEEK_BAR_H), Sense::hover());
+        let display_ms = if is_scrubbing { self.scrub.position_ms } else { self.current_ms() };
+        let ratio = if total > 0 { (display_ms as f32 / total as f32).clamp(0.0, 1.0) } else { 0.0 };
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), SEEK_BAR_H), Sense::hover());
         let painter = ui.painter();
 
         let track_h = 17.0;
@@ -1407,182 +1116,117 @@ impl WinampTestApp {
             Vec2::new(rect.width() - track_pad_l - track_pad_r, track_h),
         );
 
-        painter.rect_filled(
-            track_rect,
-            CornerRadius::same(1),
-            Color32::from_rgb(20, 20, 30),
-        );
-        draw_bevel_border(painter, track_rect, BEVEL_WIDTH, BEVEL_DARK, BEVEL_LIGHT);
+        painter.rect_filled(track_rect, CornerRadius::same(1), Color32::from_rgb(20, 20, 30));
+
+        painter.line_segment([Pos2::new(track_rect.left(), track_rect.top()), Pos2::new(track_rect.right(), track_rect.top())], Stroke::new(BEVEL_WIDTH, BEVEL_DARK));
+        painter.line_segment([Pos2::new(track_rect.left(), track_rect.top()), Pos2::new(track_rect.left(), track_rect.bottom())], Stroke::new(BEVEL_WIDTH, BEVEL_DARK));
+        painter.line_segment([Pos2::new(track_rect.left(), track_rect.bottom()), Pos2::new(track_rect.right(), track_rect.bottom())], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
+        painter.line_segment([Pos2::new(track_rect.right(), track_rect.top()), Pos2::new(track_rect.right(), track_rect.bottom())], Stroke::new(BEVEL_WIDTH, BEVEL_LIGHT));
 
         let thumb_w = SEEK_THUMB_W;
         let thumb_h = SEEK_THUMB_H;
-        let thumb_x = (track_rect.left() + track_rect.width() * ratio)
-            .min(track_rect.right() - thumb_w + 2.0);
+        let thumb_x = (track_rect.left() + track_rect.width() * ratio).min(track_rect.right() - thumb_w + 2.0);
         let thumb_y = rect.top() + (rect.height() - thumb_h) / 2.0;
         let thumb = Rect::from_min_size(Pos2::new(thumb_x, thumb_y), Vec2::new(thumb_w, thumb_h));
         egui::Image::new(egui::include_image!("../assets/slider-thumb.png")).paint_at(ui, thumb);
 
         let resp = ui.interact(rect, egui::Id::new("seek"), Sense::click_and_drag());
-        if total > 0 {
-            if resp.dragged() {
-                if let Some(pos) = resp.interact_pointer_pos() {
-                    let t = ((pos.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0);
-                    self.scrub.enter((t * total as f32) as u64);
-                }
-            }
-            if resp.clicked() {
-                if let Some(pos) = resp.interact_pointer_pos() {
-                    let t = ((pos.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0);
-                    let ms = (t * total as f32) as u64;
-                    let _ = self.engine.lock().unwrap().seek(ms);
-                }
-            }
-        }
-        if resp.drag_stopped() && self.scrub.active {
-            let ms = self.scrub.position_ms;
-            let _ = self.engine.lock().unwrap().seek(ms);
-            self.scrub.cancel();
-        }
+        if resp.dragged() { if let Some(pos) = resp.interact_pointer_pos() { let t = ((pos.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0); self.scrub.enter((t * total as f32) as u64); } }
+        if resp.drag_stopped() && self.scrub.active { let ms = self.scrub.position_ms; let _ = self.engine.lock().unwrap().seek(ms); self.scrub.cancel(); }
+        if resp.clicked() { if let Some(pos) = resp.interact_pointer_pos() { let t = ((pos.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0); let ms = (t * total as f32) as u64; let _ = self.engine.lock().unwrap().seek(ms); } }
     }
 
     fn render_controls_bar(&mut self, ui: &mut Ui) {
+        let _rect = ui.available_rect_before_wrap();
+
         ui.horizontal(|ui| {
             ui.style_mut().spacing.item_spacing.x = 0.0;
             ui.set_height(CONTROLS_BAR_H);
 
-            let btn = Vec2::new(PLAYER_BTN_W, PLAYER_BTN_H);
+            let btn_h = PLAYER_BTN_H;
+            let btn_w = PLAYER_BTN_W;
 
-            let (r, clicked, pressed) = transport_button(ui, btn);
-            egui::Image::new(if pressed {
-                egui::include_image!("../assets/prev_pressed.png")
-            } else {
-                egui::include_image!("../assets/prev.png")
-            })
-            .paint_at(ui, r);
-            if clicked {
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
+            let prev_src = if pressed { egui::include_image!("../assets/prev_pressed.png") } else { egui::include_image!("../assets/prev.png") };
+            egui::Image::new(prev_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
                 let ms = self.current_ms().saturating_sub(5000);
                 let _ = self.engine.lock().unwrap().seek(ms);
             }
 
-            let (r, clicked, pressed) = transport_button(ui, btn);
-            egui::Image::new(if pressed {
-                egui::include_image!("../assets/play_pressed.png")
-            } else {
-                egui::include_image!("../assets/play.png")
-            })
-            .paint_at(ui, r);
-            if clicked {
-                if self.url.is_empty() {
-                    self.error = Some("NO MUSIC LOADED!".to_string());
-                } else {
-                    self.error = None;
-                    let mut e = self.engine.lock().unwrap();
-                    let _ = e.play(&self.url, None);
-                }
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
+            let play_src = if pressed { egui::include_image!("../assets/play_pressed.png") } else { egui::include_image!("../assets/play.png") };
+            egui::Image::new(play_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
+                if self.url.is_empty() { self.error = "NO MUSIC LOADED!".to_string(); }
+                else { self.error.clear(); let mut e = self.engine.lock().unwrap(); let _ = e.play(&self.url, None); }
             }
 
-            let (r, clicked, pressed) = transport_button(ui, btn);
-            egui::Image::new(if pressed {
-                egui::include_image!("../assets/pause_pressed.png")
-            } else {
-                egui::include_image!("../assets/pause.png")
-            })
-            .paint_at(ui, r);
-            if clicked {
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
+            let pause_src = if pressed { egui::include_image!("../assets/pause_pressed.png") } else { egui::include_image!("../assets/pause.png") };
+            egui::Image::new(pause_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
                 let mut e = self.engine.lock().unwrap();
-                match e.get_state() {
-                    PlaybackState::Playing => e.pause(),
-                    PlaybackState::Paused => e.resume(),
-                    _ => {}
-                }
+                match e.get_state() { PlaybackState::Playing => e.pause(), PlaybackState::Paused => e.resume(), _ => {} }
             }
 
-            let (r, clicked, pressed) = transport_button(ui, btn);
-            egui::Image::new(if pressed {
-                egui::include_image!("../assets/stop_pressed.png")
-            } else {
-                egui::include_image!("../assets/stop.png")
-            })
-            .paint_at(ui, r);
-            if clicked {
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
+            let stop_src = if pressed { egui::include_image!("../assets/stop_pressed.png") } else { egui::include_image!("../assets/stop.png") };
+            egui::Image::new(stop_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
                 self.engine.lock().unwrap().stop();
             }
 
-            let (r, clicked, pressed) = transport_button(ui, btn);
-            egui::Image::new(if pressed {
-                egui::include_image!("../assets/next_pressed.png")
-            } else {
-                egui::include_image!("../assets/next.png")
-            })
-            .paint_at(ui, r);
-            if clicked {
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
+            let next_src = if pressed { egui::include_image!("../assets/next_pressed.png") } else { egui::include_image!("../assets/next.png") };
+            egui::Image::new(next_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
                 let ms = self.current_ms() + 5000;
                 let _ = self.engine.lock().unwrap().seek(ms);
             }
+            ui.add_space(30.0);
 
-            ui.add_space(TRANSPORT_SPACER);
-
-            let (r, clicked, pressed) = transport_button(ui, btn);
-            egui::Image::new(if pressed {
-                egui::include_image!("../assets/eject_pressed.png")
-            } else {
-                egui::include_image!("../assets/eject.png")
-            })
-            .paint_at(ui, r);
-            if clicked {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter(
-                        "Audio",
-                        &["mp3", "wav", "flac", "ogg", "m4a", "aac", "opus"],
-                    )
-                    .pick_file()
-                {
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(btn_w, btn_h), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
+            let eject_src = if pressed { egui::include_image!("../assets/eject_pressed.png") } else { egui::include_image!("../assets/eject.png") };
+            egui::Image::new(eject_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
+                if let Some(path) = rfd::FileDialog::new().add_filter("Audio", &["mp3","wav","flac","ogg","m4a","aac","opus"]).pick_file() {
                     let p = path.to_string_lossy().to_string();
                     self.url = p.clone();
-                    self.error = None;
+                    self.error.clear();
                     let mut e = self.engine.lock().unwrap();
                     let _ = e.play(&p, None);
                 }
             }
+            ui.add_space(30.0);
 
-            ui.add_space(TRANSPORT_SPACER);
-
-            let (r, clicked, pressed) =
-                transport_button(ui, Vec2::new(SHUFFLE_BTN_W, SHUFFLE_BTN_H));
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(SHUFFLE_BTN_W, SHUFFLE_BTN_H), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
             let shuffle_src = if self.shuffle {
-                if pressed {
-                    egui::include_image!("../assets/shuffle_on_pressed.png")
-                } else {
-                    egui::include_image!("../assets/shuffle_on.png")
-                }
+                if pressed { egui::include_image!("../assets/shuffle_on_pressed.png") } else { egui::include_image!("../assets/shuffle_on.png") }
             } else {
-                if pressed {
-                    egui::include_image!("../assets/shuffle_off_pressed.png")
-                } else {
-                    egui::include_image!("../assets/shuffle_off.png")
-                }
+                if pressed { egui::include_image!("../assets/shuffle_off_pressed.png") } else { egui::include_image!("../assets/shuffle_off.png") }
             };
-            egui::Image::new(shuffle_src).paint_at(ui, r);
-            if clicked {
+            egui::Image::new(shuffle_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
                 self.shuffle = !self.shuffle;
             }
 
-            let (r, clicked, pressed) = transport_button(ui, Vec2::new(REPEAT_BTN_W, REPEAT_BTN_H));
+            let (btn_rect, btn_resp) = ui.allocate_exact_size(Vec2::new(REPEAT_BTN_W, REPEAT_BTN_H), Sense::click());
+            let pressed = btn_resp.is_pointer_button_down_on();
             let repeat_src = if self.repeat {
-                if pressed {
-                    egui::include_image!("../assets/repeat_on_pressed.png")
-                } else {
-                    egui::include_image!("../assets/repeat_on.png")
-                }
+                if pressed { egui::include_image!("../assets/repeat_on_pressed.png") } else { egui::include_image!("../assets/repeat_on.png") }
             } else {
-                if pressed {
-                    egui::include_image!("../assets/repeat_off_pressed.png")
-                } else {
-                    egui::include_image!("../assets/repeat_off.png")
-                }
+                if pressed { egui::include_image!("../assets/repeat_off_pressed.png") } else { egui::include_image!("../assets/repeat_off.png") }
             };
-            egui::Image::new(repeat_src).paint_at(ui, r);
-            if clicked {
+            egui::Image::new(repeat_src).paint_at(ui, btn_rect);
+            if btn_resp.clicked() {
                 self.repeat = !self.repeat;
             }
         });
@@ -1603,34 +1247,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sample_url = format!("{}/assets/sample.mp3", env!("CARGO_MANIFEST_DIR"));
     let app = WinampTestApp::new(engine, &sample_url);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([WIN_W, WIN_H])
-            .with_min_inner_size([WIN_W, WIN_H])
-            .with_max_inner_size([WIN_W, WIN_H])
-            .with_decorations(false)
-            .with_transparent(false),
+        viewport: egui::ViewportBuilder::default().with_inner_size([WIN_W, WIN_H]).with_min_inner_size([WIN_W, WIN_H]).with_max_inner_size([WIN_W, WIN_H]).with_decorations(false).with_transparent(false),
         ..Default::default()
     };
-    eframe::run_native(
-        "Winamp 2.x Classic",
-        options,
-        Box::new(|cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "04b03".to_owned(),
-                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-                    "../assets/04B_03__.TTF"
-                ))),
-            );
-            fonts.families.insert(
-                egui::FontFamily::Name("04b03".into()),
-                vec!["04b03".to_owned()],
-            );
-            cc.egui_ctx.set_fonts(fonts);
-            Ok(Box::new(app))
-        }),
-    )?;
+    eframe::run_native("Winamp 2.x Classic", options, Box::new(|cc| {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "04b03".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/04B_03__.TTF"))),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name("04b03".into()),
+            vec!["04b03".to_owned()],
+        );
+        cc.egui_ctx.set_fonts(fonts);
+        Ok(Box::new(app))
+    }))?;
     Ok(())
 }
 
@@ -1641,7 +1273,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     const CORRECT: [[bool; 7]; 10] = [
         [true, true, true, false, true, true, true],
         [false, false, true, false, false, true, false],
@@ -1654,94 +1285,11 @@ mod tests {
         [true, true, true, true, true, true, true],
         [true, true, true, true, false, true, true],
     ];
-
     #[test]
     fn digit_patterns_correct() {
         for digit in 0..=9 {
             let d = SevenSegDigit::new(digit, 0.0, 0.0);
             assert_eq!(d.segments, CORRECT[digit as usize]);
         }
-    }
-
-    #[test]
-    fn fmt_ms_rounds_down() {
-        assert_eq!(fmt_ms(0), "00:00");
-        assert_eq!(fmt_ms(59_999), "00:59");
-        assert_eq!(fmt_ms(60_000), "01:00");
-        assert_eq!(fmt_ms(3_661_000), "61:01");
-    }
-
-    #[test]
-    fn scrub_commit_clears_active() {
-        let mut s = ScrubState::default();
-        assert_eq!(s.commit(), None);
-        s.enter(5000);
-        assert_eq!(s.commit(), Some(5000));
-        assert!(!s.active);
-        assert_eq!(s.commit(), None);
-    }
-
-    #[test]
-    fn scrub_cancel_clears_state() {
-        let mut s = ScrubState::default();
-        s.enter(5000);
-        s.cancel();
-        assert!(!s.active);
-        assert_eq!(s.position_ms, 0);
-    }
-
-    #[test]
-    fn spectrum_decays_when_not_playing() {
-        let mut s = SpectrumState::new();
-        s.smoothed[0] = 1.0;
-        s.update(false);
-        assert!(s.smoothed[0] < 1.0);
-        assert!(s.smoothed[0] > 0.0);
-    }
-
-    #[test]
-    fn spectrum_peaks_reset_when_not_playing() {
-        let mut s = SpectrumState::new();
-        s.peaks[0] = 0.8;
-        s.update(false);
-        assert_eq!(s.peaks[0], 0.0);
-    }
-
-    #[test]
-    fn vol_color_range() {
-        let c0 = vol_color(0.0);
-        assert_eq!(c0.r(), 0);
-        assert_eq!(c0.g(), 180);
-        assert_eq!(c0.b(), 0);
-        let c1 = vol_color(1.0);
-        assert_eq!(c1.r(), 255);
-        assert_eq!(c1.g(), 0);
-        assert_eq!(c1.b(), 0);
-    }
-
-    #[test]
-    fn bal_color_range() {
-        let c0 = bal_color(0.0);
-        assert_eq!(c0.r(), 255);
-        assert_eq!(c0.g(), 255);
-        assert_eq!(c0.b(), 0);
-        let c1 = bal_color(1.0);
-        assert_eq!(c1.r(), 255);
-        assert_eq!(c1.g(), 0);
-        assert_eq!(c1.b(), 0);
-        let cm = bal_color(0.5);
-        assert_eq!(cm.r(), 0);
-        assert_eq!(cm.g(), 255);
-        assert_eq!(cm.b(), 0);
-    }
-
-    #[test]
-    fn lerp_color_midpoint() {
-        let a = Color32::from_rgb(0, 0, 0);
-        let b = Color32::from_rgb(100, 200, 50);
-        let m = lerp_color(a, b, 0.5);
-        assert_eq!(m.r(), 50);
-        assert_eq!(m.g(), 100);
-        assert_eq!(m.b(), 25);
     }
 }

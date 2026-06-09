@@ -59,7 +59,11 @@ pub enum SeekError {
     Codec(String),
     #[error("interleaved sample counter overflow")]
     Overflow,
+    #[error("packet skip gave up after {0} consecutive errors")]
+    PacketSkipLimit(u32),
 }
+
+const MAX_CONSECUTIVE_PACKET_ERRORS: u32 = 100;
 
 /// Seeks `format` to approximately `target_ms` milliseconds.
 ///
@@ -152,6 +156,7 @@ fn packet_skip_seek(
         .make_audio_decoder(codec_params, &AudioDecoderOptions::default())
         .map_err(|e| SeekError::Codec(format!("{:?}", e)))?;
 
+    let mut consecutive_errors: u32 = 0;
     loop {
         if should_stop.load(Ordering::Relaxed) {
             return Ok(SeekOutcome {
@@ -161,7 +166,10 @@ fn packet_skip_seek(
         }
 
         let packet = match format.next_packet() {
-            Ok(Some(p)) => p,
+            Ok(Some(p)) => {
+                consecutive_errors = 0;
+                p
+            }
             Ok(None) => {
                 warn!(
                     "[seek] End of stream reached before target {} ms",
@@ -173,7 +181,15 @@ fn packet_skip_seek(
                 });
             }
             Err(e) => {
-                warn!("[seek] Packet error: {}", e);
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_PACKET_ERRORS {
+                    warn!(
+                        "[seek] Too many consecutive packet errors ({}), giving up",
+                        consecutive_errors
+                    );
+                    return Err(SeekError::PacketSkipLimit(consecutive_errors));
+                }
+                warn!("[seek] Packet error: {} (attempt {}/{})", e, consecutive_errors, MAX_CONSECUTIVE_PACKET_ERRORS);
                 thread::sleep(Duration::from_millis(10));
                 continue;
             }
@@ -239,9 +255,27 @@ mod tests {
         let e1 = SeekError::TrackNotFound(7);
         let e2 = SeekError::Codec("test".into());
         let e3 = SeekError::Overflow;
+        let e4 = SeekError::PacketSkipLimit(99);
         assert!(format!("{}", e1).contains("7"));
         assert!(format!("{}", e2).contains("test"));
         assert!(format!("{}", e3).contains("overflow"));
+        assert!(format!("{}", e4).contains("99"));
+        assert!(format!("{}", e4).contains("gave up"));
+    }
+
+    #[test]
+    fn test_packet_skip_limit_constant_sanity() {
+        // The limit is a constant defined at module scope. Verify it
+        // is reasonable: large enough to survive transient glitches
+        // but small enough to prevent a truly wedged decode thread.
+        assert!(
+            MAX_CONSECUTIVE_PACKET_ERRORS >= 10,
+            "limit must be at least 10 to survive transient errors"
+        );
+        assert!(
+            MAX_CONSECUTIVE_PACKET_ERRORS <= 1000,
+            "limit must not exceed 1000 to avoid hanging forever"
+        );
     }
 
     /// End-to-end check of the math that produced the iOS unit bug.

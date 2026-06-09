@@ -769,11 +769,16 @@ impl PlaybackEngine {
         self.push_seek_started(clamped_position);
 
         if is_queued {
-            // Seek is past the buffered region. The streaming code will
-            // restart the download from this byte offset and the existing
-            // pipeline will pick up `seek_target_ms` once the buffer has
-            // grown to cover the target. Inform the client so it can show
-            // a "queued" state in the UI.
+            // Seek is past the buffered region. Forward the request to the
+            // decode thread anyway — it will block in packet-skip until the
+            // background filler catches up. Without this the seek is silently
+            // lost because the non-Android playback_loop only monitors
+            // seek_request after startup, not seek_target_ms.
+            self.seek_request.store(clamped_position, Ordering::Relaxed);
+            {
+                let mut q = self.audio_queue.lock();
+                q.clear();
+            }
             self.push_event(crate::models::EngineEvent {
                 event_type: crate::models::ENGINE_EVENT_SEEK_QUEUED,
                 int_param: clamped_position as i64,
@@ -817,6 +822,7 @@ impl PlaybackEngine {
                         let total_duration_ms = self.total_duration_ms.clone();
                         let load_error = self.load_error.clone();
                         let seek_target_ms = self.seek_target_ms.clone();
+                        let seek_request = self.seek_request.clone();
                         let handle = thread::Builder::new()
                             .name("playback-decode".into())
                             .spawn(move || {
@@ -832,7 +838,7 @@ impl PlaybackEngine {
                                     total_duration_ms,
                                     load_error,
                                     seek_target_ms,
-                                    Arc::new(AtomicU64::new(0)),
+                                    seek_request,
                                 );
                             })
                             .map_err(|e| PlaybackError::ThreadSpawn {
