@@ -150,7 +150,7 @@ class AdaptiveRingBuffer {
   /// `[0, capacityMs]`. Returns the remainder if the file is complete.
   int get availableMs {
     if (isComplete && totalMs > 0) {
-      return (totalMs - readOffsetMs).clamp(0, 1 << 31);
+      return (totalMs - readOffsetMs).clamp(0, 2147483647);
     }
     final filled = writeOffsetMs - readOffsetMs;
     if (filled <= 0) return 0;

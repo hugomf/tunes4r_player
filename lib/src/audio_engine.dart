@@ -194,11 +194,8 @@ class AudioEngine {
   ///
   /// Emits a [PlaybackPosition] every 16ms (vsync-aligned) with the current
   /// playhead and total duration. The stream also emits synchronously
-  /// inside [seek] (with the seek target) and [play] (with 0), so the UI
-  /// gets instant feedback without waiting for the next poll.
-  ///
-  /// Subscribers should use `distinct()` to skip duplicates if they only
-  /// care about changes.
+  /// inside [seek] and [play], so the UI gets instant feedback without
+  /// waiting for the next poll.
   Stream<PlaybackPosition> get positionStream => _poller.positionCtrl.stream;
 
   /// Stream of native engine events (state changes, seek lifecycle,
@@ -334,6 +331,7 @@ class AudioEngine {
 
   void seek(int positionMs) {
     _ffi.seek(_h, positionMs);
+    _poller.positionCtrl.add(_ffi.getPosition(_h));
   }
 
   void setVolume(double volume) {

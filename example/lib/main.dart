@@ -78,7 +78,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
         if (!mounted) return;
         setState(() {
           _currentState = state;
-          _status = 'State: ${_stateLabel(state)}';
+          _status = 'State: ${state.name}';
           if (state == PlaybackState.stopped) {
             _activeSource = _SourceType.none;
           }
@@ -147,25 +147,6 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
 
   // ── Helpers ──────────────────────────────────────────────────────────
 
-  String _stateLabel(PlaybackState s) {
-    switch (s) {
-      case PlaybackState.stopped:
-        return 'stopped';
-      case PlaybackState.connecting:
-        return 'connecting';
-      case PlaybackState.buffering:
-        return 'buffering';
-      case PlaybackState.decoding:
-        return 'decoding';
-      case PlaybackState.playing:
-        return 'playing';
-      case PlaybackState.paused:
-        return 'paused';
-      case PlaybackState.error:
-        return 'error';
-    }
-  }
-
   void _commitSeek(double v) {
     if (!_canSeek || _durationMs <= 0) return;
     _engine?.seek(v.toInt());
@@ -183,10 +164,11 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     if (_engine == null) return;
     final input = _ytController.text.trim();
     if (input.isEmpty) return;
-    final uri = input.contains('youtu')
+    final uri = Uri.tryParse(input);
+    final url = (uri != null && uri.host.isNotEmpty)
         ? input
         : 'https://www.youtube.com/watch?v=$input';
-    _engine!.play(uri);
+    _engine!.play(url);
     setState(() => _activeSource = _SourceType.youtube);
   }
 
@@ -216,11 +198,11 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     );
   }
 
-  /// Row of standard transport buttons: Play, Pause, Resume, Stop.
+  /// Row of standard transport buttons: Play, Pause, Resume (optional), Stop.
   Widget _transportRow({
     required VoidCallback? onPlay,
     required VoidCallback? onPause,
-    required VoidCallback? onResume,
+    VoidCallback? onResume,
     required VoidCallback? onStop,
   }) {
     return Row(
@@ -228,8 +210,10 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
         Expanded(child: ElevatedButton(onPressed: onPlay, child: const Text('Play'))),
         const SizedBox(width: 6),
         Expanded(child: ElevatedButton(onPressed: onPause, child: const Text('Pause'))),
-        const SizedBox(width: 6),
-        Expanded(child: ElevatedButton(onPressed: onResume, child: const Text('Resume'))),
+        if (onResume != null) ...[
+          const SizedBox(width: 6),
+          Expanded(child: ElevatedButton(onPressed: onResume, child: const Text('Resume'))),
+        ],
         const SizedBox(width: 6),
         Expanded(child: ElevatedButton(onPressed: onStop, child: const Text('Stop'))),
       ],
@@ -359,14 +343,10 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(child: ElevatedButton(onPressed: _playLive, child: const Text('Play'))),
-                const SizedBox(width: 6),
-                Expanded(child: ElevatedButton(onPressed: () => _engine?.pause(), child: const Text('Pause'))),
-                const SizedBox(width: 6),
-                Expanded(child: ElevatedButton(onPressed: () => _engine?.stop(), child: const Text('Stop'))),
-              ],
+            _transportRow(
+              onPlay: _playLive,
+              onPause: () => _engine?.pause(),
+              onStop: () => _engine?.stop(),
             ),
             const SizedBox(height: 8),
             _bufferedSlider(_SourceType.live),

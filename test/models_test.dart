@@ -384,7 +384,7 @@ void main() {
 
   group('EngineEvent', () {
     test('constructs with typed eventType and intParam', () {
-      final event = EngineEvent(
+      const event = EngineEvent(
         eventType: EngineEventType.seekCompleted,
         intParam: 5000,
       );
@@ -399,12 +399,12 @@ void main() {
 
   group('Tunes4rEngineException', () {
     test('toString includes message', () {
-      final e = Tunes4rEngineException('something broke');
+      const e = Tunes4rEngineException('something broke');
       expect(e.toString(), 'Tunes4rEngineException: something broke');
     });
 
     test('toString includes error code when set', () {
-      final e = Tunes4rEngineException('engine failed', errorCode: -1);
+      const e = Tunes4rEngineException('engine failed', errorCode: -1);
       expect(
         e.toString(),
         'Tunes4rEngineException: engine failed (code: -1)',

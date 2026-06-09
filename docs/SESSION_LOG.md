@@ -232,3 +232,128 @@ Fix the three remaining issues from the code review of the stream decorator modu
 - `cargo check --workspace --lib --examples --tests` — 0 errors
 - `cargo test --test ffi_contract` — 9/9 pass
 - `cargo test -p tunes4r-core --lib` — 111/111 pass
+
+## Session 9 — Seek packet error retry limit + CDN fixture replay (2026-06-08)
+
+### Done
+- **Added `PacketSkipLimit` error variant + retry counter** to `packet_skip_seek()` in `crates/core/src/audio/decoder/seek.rs`: prevents infinite loop on repeated `format.next_packet()` errors (e.g., corrupted stream data at seek position). Gives up after 100 consecutive errors and returns `SeekError::PacketSkipLimit(100)`.
+- **Added `MAX_CONSECUTIVE_PACKET_ERRORS = 100`** constant + unit tests for the error variant display and constant sanity bounds.
+- **Created CDN fixture capture binary** (`src/bin/capture_youtube_fixture.rs`): `cargo run --bin capture_youtube_fixture -- <video-id>` downloads a real YouTube CDN audio stream and saves it as `tests/fixtures/youtube_stream.bin` + `youtube_stream.json`.
+- **Created fixture replay test** (`tests/mock_youtube_stream.rs`): `mock_youtube_seek_with_fixture` loads the captured fixture and serves it via a local HTTP server with Range support. Skips gracefully if no fixture exists — run the capture binary once to generate it.
+- **Fixed borrow/move issue** in `serve_fixture()` local HTTP server closure.
+- **Rewrote capture binary** to use `YouTube::videos().stream_with_client()` (newer `StreamExtractor` path) instead of the broken `get_audio_stream_url()` (legacy `stream.rs` path). The legacy path fails because it doesn't auto-generate a PoToken and all non-signature clients return login-required/unplayable.
+- **Cleaned up stray files** left over from stash operations.
+
+### Key findings
+- `get_audio_stream_url()` in `stream.rs` is broken — doesn't auto-generate PoToken, causing all clients to fail for most videos. The `StreamExtractor` path in `extractor.rs` (used by `YouTube::videos().stream()`) works because it auto-generates a cold-start PoToken from visitor_data.
+- Working clients: ANDROID_VR (27 formats), ANDROID (27 formats), IOS (8 formats)
+- Failing clients: MWEB/WEB (unplayable), TVHTML5/WEB_EMBEDDED (error), ANDROID_MUSIC/ANDROID_CREATOR/WEB_CREATOR (login required)
+
+### Verification
+- `cargo check --workspace --lib --tests --examples --bins` — 0 errors, 0 warnings
+- `cargo test -p tunes4r-core -- seek` — 5 seek unit tests pass (including 2 new)
+- `cargo test -p tunes4r --test yt_stream_seek` — 4/4 pass
+- `cargo test -p tunes4r --test mock_youtube_stream mock_youtube_seek_with_fixture` — 1/1 pass (real YouTube CDN fixture data, no packet errors)
+- Full test suite: 0 failures
+
+## Session 10 — winamp_tui.rs full rewrite (2026-06-08)
+
+### Done
+- **Fully rewrote `rust/examples/winamp_tui.rs`** (1088→1978 lines): compact ratatui Winamp-style TUI
+  - **Popup system**: URL input popup with text editing (cursor, backspace, delete, arrows, home/end) + file browser with directory navigation
+  - **9-row compact layout**: LCD panel (title, VU meters, timer, state pill, transport buttons, seek bar, section indicators) fitting in ~9 terminal rows
+  - **Console sidebar**: toggleable `l` key, scrollable log buffer viewer on the right side
+  - **File browser**: `b` key opens an in-TUI file browser with [..] parent navigation, directory listing (▶ prefixed), file selection. Enter plays selected file
+  - **3 source sections**: File/YouTube/Live with keyboard 1/2/3 selection, separate section info (URL, position, state)
+  - **Shutdown signal** for graceful cleanup on quit
+  - **Scrub mode**: `k` enters, arrows nudge ±1s/±10s, Enter commits, Esc cancels
+  - **Lock/unlock safety** with `lock_ui`/`lock_engine` helpers (never panic on poisoned mutex)
+- **Fixed popup Enter play**: inline in `handle_key` (drops UI lock before acquiring engine lock, then re-acquires UI for error reporting)
+- **Fixed compilation errors**: unused `Write` import, `&&str` → `*sym`, mutable borrow on `e.stop()`, temporary array lifetime, `PlaybackError` type mismatch in engine lock error
+
+### Verification
+- `cargo build --example winamp_tui` — 0 errors, 6 warnings (pre-existing unused items)
+- `cargo check --workspace` — 0 errors, 0 warnings
+- `cargo test --lib` — 3/3 pass
+
+## Session 11 — Code review improvements (2026-06-08)
+
+### Done
+- **`seek()` now emits position**: `audio_engine.dart:seek()` calls `_poller.positionCtrl.add(_ffi.getPosition(_h))` after native seek, matching `play()` behavior. Updated docstring to remove stale "with the seek target" claim.
+- **Removed `_stateLabel`** in example app (`main.dart`): replaced with `state.name` (Dart enum built-in).
+- **`availableMs` clamp clarity**: changed `1 << 31` → `2147483647` (i32::MAX literal) in `models.dart`.
+- **DRY transport row**: `_transportRow` now conditionally shows Resume button (`onResume` is nullable). Live section uses `_transportRow` instead of inline row.
+- **URL detection**: `_playYoutube()` uses `Uri.tryParse()` instead of fragile `input.contains('youtu')`.
+- **Example widget test fixed**: replaced stale counter-app template test with `formatMs()` unit test. Added `flutter_test` and `flutter_lints` dev deps to example pubspec.
+- **Lint fixes**: 3 `prefer_const_constructors` violations fixed in `models_test.dart`.
+
+### Verification
+- `dart analyze lib/ test/ example/lib/` — 0 issues
+- `dart analyze` (example/) — 0 issues
+
+## Session 12 — YouTube seek bugfix (2026-06-08)
+
+### Analysis
+Investigated why YouTube seek is broken in the winamp TUI. Root cause: two bugs in `commands.rs::seek()`.
+
+### Bugs fixed
+
+**Bug 1 — Queued seeks silently lost** (`commands.rs:771-781`):
+When the seek target was past the buffered region (`is_queued == true`), the code set `seek_target_ms` but never set `seek_request`. The non-Android decode thread's `playback_loop()` only monitors `seek_request` after startup — it never reads `seek_target_ms`. The seek was silently dropped.  
+**Fix**: Added `self.seek_request.store(clamped_position, Ordering::Relaxed)` + `audio_queue.lock().clear()` in the queued path. The decode thread will now pick up the seek request and block in `packet_skip_seek()` until the background filler catches up.
+
+**Bug 2 — Backward seek loses future seek requests** (`commands.rs:835`):
+The backward seek path spawned a new decode thread with `Arc::new(AtomicU64::new(0))` (a fresh atomic) instead of the shared `self.seek_request`. Any subsequent `seek()` call stored the target in the original atomic, but the new decode thread was watching its own disconnected atomic.  
+**Fix**: Added `let seek_request = self.seek_request.clone();` before thread spawn and passed `seek_request` instead of the fresh atomic.
+
+### Verification
+- `cargo check --lib -p tunes4r-core` — 0 errors
+- `cargo test -p tunes4r-core --lib` — 112/112 pass
+- `cargo test --test seek_streaming` — 10/10 pass (including `stream_seek_backward_within_buffer_emits_both_events`)
+- `cargo check --example winamp_tui` — 0 errors
+
+## Session 13 — LCD layout: wider LCD + right-justified timer (2026-06-08)
+
+### Done
+- **Widened LCD panel** from 24 to 36 columns in `body_cols` layout constraint — gives inner.width=34 (was 22), providing room for state icon + label on the left and timer on the right.
+- **Right-justified 7-segment timer**: timer digits now start at `inner.right() - 22` instead of `inner.x`; minus sign drawn just left of the timer (2 cols) instead of at the inner left edge.
+- **Spectrum retains full width** (`spec_w = inner.width` = 34 cols), now extends ~10 columns to the left of the timer start — matching the winamptest_ui layout where the spectrum is wider than the timer and fills the LCD.
+
+### Layout now
+```
+┌─────────────────────────────────────┐
+│[▶] CUR             00:42            │  Row 0: icon + label (left), timer digits (right, rows 1‑5)
+│                        ██           │
+│                        █  █         │
+│                        █  █         │  Rows 1‑5: right‑justified 7‑segment timer
+│                        █  █         │
+│                        █  █         │
+│                                     │  Row 6: gap
+│ · █████████████████████████████████ │
+│ · █████████████████████████████████ │  Rows 7‑13: spectrum (full 34‑col width,
+│ · █████████████████████████████████ │             10 cols wider than timer start)
+│ · █████████████████████████████████ │
+│ · █████████████████████████████████ │
+│ · · · · · · · · · · · · · · · · ·  │
+└─────────────────────────────────────┘
+```
+
+### Verification
+- `cargo build --example winamp_tui` — 0 errors
+- `cargo clippy` — 0 new warnings
+
+## Session 14 — Spectrum + button fixes (2026-06-08)
+
+### Button press state fix
+- **Fixed `C_BTN_PRESSED`**: was `rgb(55,55,80)` (brighter than `C_BTN_BG = rgb(40,40,60)`) — made the "pressed" button look raised instead of sunken. Changed to `rgb(26,26,44)` which is darker than `C_BTN_BG`, so active buttons now properly appear depressed.
+- **Increased bevel contrast**: `C_BTN_BEVEL_HI` `rgb(140,140,165)` → `rgb(180,180,205)` (brighter highlight), `C_BTN_BEVEL_LO` `rgb(25,25,40)` → `rgb(12,12,24)` (deeper shadow).
+
+### Spectrum: reverted to zone coloring matching winamptest_ui
+- **Idle decay**: bars decay `*0.82` per frame (not immediate 0), peaks go to 0 immediately — exact match of winamptest_ui behavior.
+- **Restored 5-zone amplitude coloring → simplified to 3 zones**: green (0–40%), amber (40–75%), red (75–100%). Removed unused `C_SPEC_YLW` and `C_SPEC_ORG` constants.
+- **Test updated**: `spectrum_goes_flat_when_stopped` → `spectrum_decays_when_stopped`.
+- **Fixed vertical resolution**: body height 16→22 rows, transport 4→3 rows. Each bar now has ~9 cells instead of ~2, so bars grow/shrink smoothly instead of flickering as individual pixels.
+
+### Verification
+- `cargo check` — 0 errors
+- `cargo test --example winamp_tui` — 7/7 pass
