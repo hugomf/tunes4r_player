@@ -1,3 +1,8 @@
+#![allow(
+    clippy::too_many_arguments,
+    dead_code
+)]
+
 // winamp_tui — Terminal Winamp classic clone with real tunes4r backend
 //
 // Usage:
@@ -92,6 +97,7 @@ fn fmt_ms(ms: u64) -> String {
 enum LogLevel {
     Info,
     Warn,
+    #[allow(dead_code)]
     Error,
 }
 
@@ -617,7 +623,7 @@ impl Widget for TitleBar {
         }
 
         let gold = Color::Rgb(0xe7, 0xcf, 0x86);
-        let gold_dark = Color::Rgb(0x5b, 0x54, 0x42);
+
 
         // Corners
         buf[(area.left(), area.y)]
@@ -695,7 +701,6 @@ struct LcdPanel<'a> {
     total_ms: u64,
     show_remaining: bool,
     spectrum: &'a SpectrumState,
-    is_playing: bool,
 }
 
 impl<'a> Widget for LcdPanel<'a> {
@@ -949,7 +954,7 @@ impl<'a> Widget for MetadataPanel<'a> {
             buf,
             area.x + 1,
             area.y + 1,
-            area.x + box_w as u16 - 1,
+            area.x + box_w - 1,
             &padded,
             title_color,
             C_BADGE_BG,
@@ -1490,7 +1495,6 @@ fn draw(app: &WinampApp, frame: &mut ratatui::Frame) {
         total_ms: app.total_ms(),
         show_remaining: app.show_remaining,
         spectrum: &app.spectrum,
-        is_playing: app.is_playing(),
     }
     .render(lcd_split[0], buf);
 

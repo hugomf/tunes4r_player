@@ -312,7 +312,7 @@ fn playback_loop(
                     let decoded_rate = audio_buf.spec().rate();
                     if decoded_rate != output_sample_rate {
                         samples = resample_interleaved(
-                            &samples, decoded_rate, output_sample_rate, channels as usize,
+                            &samples, decoded_rate, output_sample_rate, channels,
                         );
                     }
 
@@ -581,7 +581,7 @@ pub fn decode_and_play_from_read(
     );
     let output_sample_rate = config.sample_rate;
     let target_buffer_samples =
-        (output_sample_rate as f32 * 7.0) as usize * channels as usize;
+        (output_sample_rate as f32 * 7.0) as usize * channels;
 
     // ── Phase 3: Seek (if requested) ──
     let mut samples_to_skip: u64 = 0;
@@ -728,7 +728,7 @@ pub fn decode_and_play_from_read(
         channels,
         &should_stop,
         &samples_played,
-        &*seek_request,
+        &seek_request,
         &codec_params,
     );
 
@@ -883,29 +883,19 @@ pub fn play_live_internal(
 // ═══════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "android")]
-use android_logger::LevelFilter;
-#[cfg(target_os = "android")]
 use cpal::traits::HostTrait;
 #[cfg(target_os = "android")]
 use cpal::traits::StreamTrait;
 #[cfg(target_os = "android")]
 use jni::JavaVM;
 #[cfg(target_os = "android")]
-use log::LevelFilter as LogLevelFilter;
-#[cfg(target_os = "android")]
-use std::io::Read;
-#[cfg(target_os = "android")]
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use log::LevelFilter;
 #[cfg(target_os = "android")]
 use std::sync::Arc;
 #[cfg(target_os = "android")]
 use std::thread;
 #[cfg(target_os = "android")]
 use std::time::Duration;
-#[cfg(target_os = "android")]
-use symphonia::core::codecs::audio::AudioCodecParameters;
-#[cfg(target_os = "android")]
-use symphonia::core::codecs::audio::AudioDecoder;
 #[cfg(target_os = "android")]
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 #[cfg(target_os = "android")]
@@ -915,13 +905,11 @@ use symphonia::core::formats::probe::Hint;
 #[cfg(target_os = "android")]
 use symphonia::core::formats::FormatOptions;
 #[cfg(target_os = "android")]
-use symphonia::core::formats::FormatReader;
-#[cfg(target_os = "android")]
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
 #[cfg(target_os = "android")]
 use symphonia::core::meta::MetadataOptions;
 #[cfg(target_os = "android")]
-use symphonia::core::units::{TimeBase, Timestamp};
+use symphonia::core::units::TimeBase;
 #[cfg(target_os = "android")]
 use crate::audio::decoder::seek::{seek_to_position, SeekMethod};
 #[cfg(target_os = "android")]
@@ -971,6 +959,7 @@ fn get_codec_registry() -> CodecRegistry {
 }
 
 #[cfg(target_os = "android")]
+#[allow(dead_code)]
 fn probe_audio_duration(bytes: &[u8], _len: usize, _sample_rate: u64) -> Option<u64> {
     let cursor = std::io::Cursor::new(bytes);
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
@@ -1275,7 +1264,7 @@ pub fn decode_and_play_from_read(
     ]);
 
     let max_queue_samples = (device_sample_rate as usize) * 10 * (device_channels as usize);
-    let mut packet_error_count = 0;
+    let mut _packet_error_count = 0;
     let band_count = crate::audio::engine::get_band_count();
     let mut analyzer = RmsSpectrumAnalyzer::new(device_sample_rate, band_count);
     let mut spectrum_accum: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(4096);
@@ -1295,7 +1284,7 @@ pub fn decode_and_play_from_read(
 
         match format_reader.next_packet() {
             Ok(Some(packet)) if packet.track_id == track_id => {
-                packet_error_count = 0;
+                _packet_error_count = 0;
                 match decoder.decode(&packet) {
                     Ok(audio_buf) => {
                         let decoded_rate = audio_buf.spec().rate();
@@ -1348,9 +1337,9 @@ pub fn decode_and_play_from_read(
                     }
                     Err(e) => {
                         log::error!("[stream] Decode error: {}", e);
-                        packet_error_count += 1;
-                        if packet_error_count >= MAX_PACKET_ERRORS {
-                            let err_msg = format!("Too many decode errors ({}): {}", packet_error_count, e);
+                        _packet_error_count += 1;
+                        if _packet_error_count >= MAX_PACKET_ERRORS {
+                            let err_msg = format!("Too many decode errors ({}): {}", _packet_error_count, e);
                             log::error!("[stream] {}", err_msg);
                             *load_error.lock() = err_msg;
                             break;
@@ -1439,7 +1428,7 @@ pub fn play_live_internal(
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async move {
                 let client = reqwest::Client::new();
-                let resp = match client
+                let mut resp = match client
                     .get(&fetch_url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                     .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")

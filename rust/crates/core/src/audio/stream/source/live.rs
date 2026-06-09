@@ -11,6 +11,7 @@ use crate::models::{LiveByteRing, LiveByteReader, StreamType};
 
 use super::{Capability, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use log::info;
+#[cfg(not(target_os = "android"))]
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -81,45 +82,87 @@ impl LiveSource {
 
         thread::spawn(move || {
             info!("[live-source] Starting download: {}", url);
-            loop {
-                match client
-                    .get(&url)
+            #[cfg(target_os = "android")]
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            'fetch: loop {
+                #[cfg(not(target_os = "android"))]
+                let result = client.get(&url)
                     .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
                     .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
                     .header("Icy-MetaData", "0")
-                    .send()
-                {
+                    .send();
+                #[cfg(target_os = "android")]
+                let result = rt.block_on(async {
+                    client.get(&url)
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                        .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+                        .header("Icy-MetaData", "0")
+                        .send()
+                        .await
+                });
+                let should_reconnect = match result {
                     Ok(resp) if resp.status().is_success() => {
                         info!("[live-source] Connected");
-                        let mut resp = resp.take(1024 * 1024 * 1024); // safety limit
-                        let mut buf = [0u8; 32768];
-                        loop {
-                            match resp.read(&mut buf) {
-                                Ok(0) => {
-                                    info!("[live-source] Stream ended, reconnecting...");
-                                    break;
-                                }
-                                Ok(n) => {
-                                    let mut ring = ring.lock().unwrap();
-                                    ring.push(&buf[..n]);
-                                    let tw = ring.total_written();
-                                    total_written.store(tw, Ordering::Relaxed);
-                                }
-                                Err(e) => {
-                                    info!("[live-source] Read error: {}, reconnecting...", e);
-                                    break;
+                        #[cfg(not(target_os = "android"))]
+                        {
+                            let mut resp = resp.take(1024 * 1024 * 1024);
+                            let mut buf = [0u8; 32768];
+                            loop {
+                                match resp.read(&mut buf) {
+                                    Ok(0) => {
+                                        info!("[live-source] Stream ended, reconnecting...");
+                                        break true;
+                                    }
+                                    Ok(n) => {
+                                        let mut ring = ring.lock().unwrap();
+                                        ring.push(&buf[..n]);
+                                        let tw = ring.total_written();
+                                        total_written.store(tw, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        info!("[live-source] Read error: {}, reconnecting...", e);
+                                        break true;
+                                    }
                                 }
                             }
+                        }
+                        #[cfg(target_os = "android")]
+                        {
+                            rt.block_on(async {
+                                use futures_util::StreamExt;
+                                let mut stream = resp.bytes_stream();
+                                while let Some(chunk) = stream.next().await {
+                                    match chunk {
+                                        Ok(data) => {
+                                            let mut ring = ring.lock().unwrap();
+                                            ring.push(&data);
+                                            let tw = ring.total_written();
+                                            total_written.store(tw, Ordering::Relaxed);
+                                        }
+                                        Err(e) => {
+                                            info!("[live-source] Read error: {}, reconnecting...", e);
+                                            return true;
+                                        }
+                                    }
+                                }
+                                true
+                            })
                         }
                     }
                     Ok(resp) => {
                         info!("[live-source] HTTP {} retrying...", resp.status());
+                        true
                     }
                     Err(e) => {
                         info!("[live-source] Connection failed: {}, retrying...", e);
+                        true
                     }
+                };
+                if should_reconnect {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                } else {
+                    break 'fetch;
                 }
-                std::thread::sleep(std::time::Duration::from_secs(3));
             }
         });
     }
@@ -160,7 +203,7 @@ impl StreamSource for LiveSource {
                 let byte_offset_from_live_edge = (ms_ago as f64 * bytes_per_ms) as u64;
                 // Clamp so we never go below the oldest byte still in the ring.
                 let ring_len = ring.lock().unwrap().len() as u64;
-                let oldest_byte = if total_written > ring_len { total_written - ring_len } else { 0 };
+                let oldest_byte = total_written.saturating_sub(ring_len);
                 let abs = total_written.saturating_sub(byte_offset_from_live_edge);
                 abs.max(oldest_byte)
             }

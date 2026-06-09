@@ -13,6 +13,7 @@ use tunes4r_core::audio::{PlaybackEngine, PlaybackError};
 use tunes4r_core::models::{
     DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState,
 };
+#[cfg(not(target_os = "android"))]
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::ffi::{CStr, CString};

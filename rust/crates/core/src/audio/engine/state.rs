@@ -53,7 +53,11 @@ impl PlaybackEngine {
     }
 
     pub fn get_state(&self) -> PlaybackState {
-        self.state.clone()
+        if self.stream_ended.load(Ordering::Relaxed) {
+            PlaybackState::Stopped
+        } else {
+            self.state.clone()
+        }
     }
 
     /// Set the playback state and emit a `STATE_CHANGED` event.

@@ -270,9 +270,8 @@ pub struct Videos {
 impl Videos {
     pub fn get(&self, video_id: &str) -> Result<VideoInfo, String> {
         // Try to get video info from player API first (includes duration)
-        match self.get_from_player_api(video_id) {
-            Ok(info) => return Ok(info),
-            Err(_) => {}
+        if let Ok(info) = self.get_from_player_api(video_id) {
+            return Ok(info);
         }
 
         // Fallback: oembed (no duration)

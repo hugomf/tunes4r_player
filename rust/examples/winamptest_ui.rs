@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::manual_clamp, clippy::needless_borrow)]
+
 //! Winamp Classic clone variant (450px) – narrower layout with larger buttons.
 
 use std::sync::{Arc, Mutex};

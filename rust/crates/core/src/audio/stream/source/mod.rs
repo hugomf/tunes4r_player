@@ -61,6 +61,7 @@ impl<T: Read + Seek> ReadSeek for T {}
 /// Wraps a `Read + Send + Sync` reader and provides a `Seek` impl that
 /// always returns `Unsupported`.  Used when a source inherently cannot
 /// seek (e.g. HTTP live streams) but the trait requires a `Seek` bound.
+#[allow(dead_code)]
 pub(crate) struct NonSeekable<R>(pub(crate) R);
 
 impl<R: Read> Read for NonSeekable<R> {

@@ -315,6 +315,11 @@ impl LiveByteRing {
         self.data.len()
     }
 
+    /// Returns `true` if the ring buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
     /// Read bytes from `offset` bytes before the write head.
     /// `offset` is measured from `total_written`.
     pub fn read_at(&self, abs_offset: u64, buf: &mut [u8]) -> usize {

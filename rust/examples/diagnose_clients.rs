@@ -1,3 +1,5 @@
+#![allow(clippy::needless_borrow)]
+
 //! Diagnose each YouTube client configuration.
 //!
 //! Run: cargo run --example diagnose_clients [video-id]

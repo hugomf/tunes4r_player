@@ -22,10 +22,15 @@ use crate::audio::error::PlaybackError;
 use crate::models::StreamType;
 use tunes4r_youtube::YouTube;
 
-use super::{Capability, NonSeekable, ReadSeek, SourceInfo, SourceKind, StreamSource};
+#[cfg(not(target_os = "android"))]
+use super::NonSeekable;
+use super::{Capability, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use log::{debug, info};
+#[cfg(not(target_os = "android"))]
 use std::io::{self, Cursor, Read};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(not(target_os = "android"))]
+use std::sync::Mutex;
 
 #[cfg(target_os = "android")]
 use crate::audio::stream::pipe;

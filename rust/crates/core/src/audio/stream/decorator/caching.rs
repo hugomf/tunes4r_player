@@ -242,7 +242,7 @@ impl CachingDecorator {
     }
 
     pub fn has_cached_data(&self) -> bool {
-        self.cache.lock().unwrap().data.len() > 0
+        !self.cache.lock().unwrap().data.is_empty()
     }
 
     fn start_background(&self, reader: Box<dyn ReadSeek + Send + Sync + 'static>) {

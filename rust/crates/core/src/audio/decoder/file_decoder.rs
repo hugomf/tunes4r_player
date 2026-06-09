@@ -1,23 +1,32 @@
 //! Symphonia-based audio decoder for desktop platforms (non-Android)
 
-use log::info;
-
-use crate::audio::decoder::seek::seek_to_position;
-use crate::audio::engine::{get_band_count, update_global_spectrum};
-use crate::audio::stream::cpal_source::{build_output_stream, pick_output_config};
-use crate::audio::stream::handling::resample_interleaved;
-use crate::dsp::RmsSpectrumAnalyzer;
-use cpal::traits::{HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 #[cfg(target_os = "android")]
 use crate::audio::stream::source::ReadSeek;
+#[cfg(target_os = "android")]
+use log::LevelFilter;
+#[cfg(not(target_os = "android"))]
+use log::info;
+#[cfg(not(target_os = "android"))]
+use crate::audio::decoder::seek::seek_to_position;
+#[cfg(not(target_os = "android"))]
+use crate::audio::engine::{get_band_count, update_global_spectrum};
+#[cfg(not(target_os = "android"))]
+use crate::audio::stream::cpal_source::{build_output_stream, pick_output_config};
+#[cfg(not(target_os = "android"))]
+use crate::audio::stream::handling::resample_interleaved;
+#[cfg(not(target_os = "android"))]
+use crate::dsp::RmsSpectrumAnalyzer;
+#[cfg(not(target_os = "android"))]
+use cpal::traits::{HostTrait, StreamTrait};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use symphonia::core::codecs::audio::AudioDecoderOptions;
+#[cfg(not(target_os = "android"))]
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
@@ -53,6 +62,7 @@ pub fn extract_duration(
 }
 
 #[cfg(not(target_os = "android"))]
+#[allow(clippy::too_many_arguments)]
 pub fn play_file_internal(
     path: String,
     audio_queue: Arc<parking_lot::Mutex<VecDeque<f32>>>,
@@ -417,9 +427,6 @@ use cpal::traits::HostTrait as CpalHostTrait;
 use cpal::traits::StreamTrait as CpalStreamTrait;
 
 #[cfg(target_os = "android")]
-use std::io::Read;
-
-#[cfg(target_os = "android")]
 static JVM_HANDLE: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
 
 #[cfg(target_os = "android")]
@@ -464,7 +471,7 @@ fn probe_audio_duration(bytes: &[u8], _len: usize, _sample_rate: u64) -> Option<
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::units::{TimeBase, Timestamp};
+    use symphonia::core::units::TimeBase;
     let cursor = std::io::Cursor::new(bytes);
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
     let mut format = symphonia::default::get_probe()
@@ -621,9 +628,9 @@ pub fn play_file_internal(
                         let decoded_rate = audio_buf.spec().rate();
                         let mut samples: Vec<f32> = Vec::new();
                         audio_buf.copy_to_vec_interleaved(&mut samples);
-                        if decoded_rate != device_sample_rate {
+                        if decoded_rate != sample_rate_out.load(Ordering::Relaxed) as u32 {
                             samples = crate::audio::stream::handling::resample_interleaved(
-                                &samples, decoded_rate, device_sample_rate, config.channels as usize,
+                                &samples, decoded_rate, sample_rate_out.load(Ordering::Relaxed) as u32, channels_out.load(Ordering::Relaxed) as usize,
                             );
                         }
                         buffered_samples += samples.len();
@@ -874,7 +881,6 @@ pub fn play_stream_from_pipe_internal(
         total_duration_ms,
         load_error,
         Arc::new(AtomicU64::new(0)),
-        Arc::new(AtomicU64::new(0)),
     );
 }
 
@@ -924,7 +930,7 @@ pub fn play_live_internal(
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async move {
                 let client = reqwest::Client::new();
-                let resp = match client
+                let mut resp = match client
                     .get(&fetch_url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                     .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
@@ -978,6 +984,5 @@ pub fn play_live_internal(
         total_duration_ms,
         load_error,
         seek_target_ms,
-        Arc::new(AtomicU64::new(0)),
     );
 }

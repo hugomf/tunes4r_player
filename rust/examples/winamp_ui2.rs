@@ -1,3 +1,5 @@
+#![allow(clippy::manual_clamp, clippy::needless_borrow)]
+
 //! Full-size (540px) Winamp Classic clone – Authentic Winamp 2.x visuals.
 //! Fixes: title bar grip, vertical background gradient, mono/stereo glow,
 //! seek track groove, and authentic seek thumb bevel.

@@ -1,3 +1,5 @@
+#![allow(clippy::useless_format, clippy::map_or)]
+
 //! Unit tests for approx_duration_ms deserialization (string vs number).
 //!
 //! Run: cargo run --example test_duration_deser

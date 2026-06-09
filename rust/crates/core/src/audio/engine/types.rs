@@ -99,6 +99,10 @@ pub struct PlaybackEngine {
     /// checks this after each packet. A non-zero value means "seek to this
     /// millisecond position". The thread clears it back to 0 after processing.
     pub(crate) seek_request: Arc<AtomicU64>,
+
+    /// Set to true when playback ends naturally (stream finished, not user-stopped).
+    /// Used by `get_state()` to return `Stopped` and by the FFI to detect end-of-stream.
+    pub(crate) stream_ended: Arc<AtomicBool>,
 }
 
 impl PlaybackEngine {

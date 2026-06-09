@@ -6,7 +6,10 @@ use crate::audio::stream::cpal_source::AudioBuffer;
 #[cfg(not(target_os = "android"))]
 use crate::audio::stream::handling::ByteCountingRead;
 
-use crate::models::{DownloadBuffer, PlaybackState};
+use crate::models::{
+    DownloadBuffer, EngineEvent, PlaybackState, ENGINE_EVENT_END_OF_STREAM,
+    ENGINE_EVENT_STATE_CHANGED,
+};
 use log::{debug, error, info, warn};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -37,6 +40,7 @@ impl PlaybackEngine {
 
         // Stop any current playback
         self.should_stop.store(true, Ordering::Relaxed);
+        self.stream_ended.store(false, Ordering::Relaxed);
         {
             let mut q = self.audio_queue.lock();
             q.clear();
@@ -118,8 +122,10 @@ impl PlaybackEngine {
         let total_duration_ms = self.total_duration_ms.clone();
         let load_error = self.load_error.clone();
         let seek_target_ms = self.seek_target_ms.clone();
-        let pipe_bytes_sent = self.pipe_bytes_sent.clone();
-        let seek_request = self.seek_request.clone();
+        let _pipe_bytes_sent = self.pipe_bytes_sent.clone();
+        let _seek_request = self.seek_request.clone();
+        let stream_ended = self.stream_ended.clone();
+        let event_queue = self.event_queue.clone();
 
         let handle = thread::Builder::new()
             .name("playback-decode".into())
@@ -132,35 +138,30 @@ impl PlaybackEngine {
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,
-                            should_stop,
+                            should_stop.clone(),
                             samples_played,
                             sample_rate,
                             channels,
                             total_duration_ms,
-                            load_error,
+                            load_error.clone(),
                             seek_target_ms,
                         );
                     }
                     _ => {
-                        // Wrap the reader so each read() bumps pipe_bytes_sent.
-                        // This is what the buffer poller uses to compute the
-                        // ring buffer's write_offset_ms — without it, Read-based
-                        // sources (YouTube, progressive HTTP) would always show
-                        // 100% buffered.
-                        let reader = ByteCountingRead::new(reader, pipe_bytes_sent);
+                        let reader = ByteCountingRead::new(reader, _pipe_bytes_sent);
                         crate::audio::stream::handling::decode_and_play_from_read(
                             Box::new(reader),
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,
-                            should_stop,
+                            should_stop.clone(),
                             samples_played,
                             sample_rate,
                             channels,
                             total_duration_ms,
-                            load_error,
+                            load_error.clone(),
                             seek_target_ms,
-                            seek_request,
+                            _seek_request,
                         );
                     }
                 }
@@ -172,30 +173,44 @@ impl PlaybackEngine {
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,
-                            should_stop,
+                            should_stop.clone(),
                             samples_played,
                             sample_rate,
                             channels,
                             total_duration_ms,
-                            load_error,
+                            load_error.clone(),
                             seek_target_ms,
                         );
                     }
                     _ => {
-                        crate::audio::decoder::file_decoder::decode_and_play_from_read(
+                        crate::audio::stream::handling::decode_and_play_from_read(
                             reader,
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,
-                            should_stop,
+                            should_stop.clone(),
                             samples_played,
                             sample_rate,
                             channels,
                             total_duration_ms,
-                            load_error,
+                            load_error.clone(),
                             seek_target_ms,
                         );
                     }
+                }
+
+                // If the decode function returned without should_stop and without
+                // an error, the stream ended naturally — notify the engine.
+                if !should_stop.load(Ordering::Relaxed) && load_error.lock().is_empty() {
+                    stream_ended.store(true, Ordering::Relaxed);
+                    event_queue.lock().push_back(EngineEvent {
+                        event_type: ENGINE_EVENT_END_OF_STREAM,
+                        int_param: 0,
+                    });
+                    event_queue.lock().push_back(EngineEvent {
+                        event_type: ENGINE_EVENT_STATE_CHANGED,
+                        int_param: PlaybackState::Stopped.to_i32() as i64,
+                    });
                 }
             })
             .map_err(|e| PlaybackError::ThreadSpawn {
@@ -360,7 +375,7 @@ impl PlaybackEngine {
         let _ = crate::audio::http::get_runtime();
 
         #[cfg(target_os = "android")]
-        let http_client = Arc::new(AsyncClient::new());
+        let http_client = Arc::new(reqwest::Client::new());
 
         #[cfg(not(target_os = "android"))]
         let http_client = {
@@ -399,6 +414,7 @@ impl PlaybackEngine {
             buffer_size_ms_fixed: Arc::new(AtomicU64::new(0)),
             live_start_time: Arc::new(std::sync::Mutex::new(None)),
             seek_request: Arc::new(AtomicU64::new(0)),
+            stream_ended: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -564,7 +580,7 @@ impl PlaybackEngine {
         let channels = self.channels.clone();
         let total_duration_ms = self.total_duration_ms.clone();
         let load_error = self.load_error.clone();
-        let client = self.http_client.clone();
+        let _client = self.http_client.clone();
         let seek_target_ms = self.seek_target_ms.clone();
         let pipe_bytes_sent = self.pipe_bytes_sent.clone();
         let pipe_total_bytes = self.pipe_total_bytes.clone();
@@ -577,7 +593,7 @@ impl PlaybackEngine {
         let handle = thread::spawn(move || {
             crate::audio::stream::handling::play_live_internal(
                 url_owned,
-                client,
+                _client,
                 audio_queue,
                 buffer_ready,
                 is_playing_flag,
@@ -614,6 +630,7 @@ impl PlaybackEngine {
                 pipe_total_bytes,
                 cache_max_ms,
                 ring,
+                0, // cache_head_ms = 0 on initial play
             );
         });
         self.playback_handle = Some(handle);
@@ -791,9 +808,9 @@ impl PlaybackEngine {
         if let Some(playback_type) = current_playback_type {
             match playback_type {
                 PlaybackType::Stream { url, .. } => {
-                    let is_backward = clamped_position < buffer.read_offset_ms;
+                    let _is_backward = clamped_position < buffer.read_offset_ms;
                     #[cfg(not(target_os = "android"))]
-                    if is_backward {
+                    if _is_backward {
                         let _ = &url;
                         info!("[engine] Cache-reopen seek to {} ms (backward within buffer)", clamped_position);
                         // Signal old decode thread to stop.
@@ -1054,7 +1071,7 @@ impl PlaybackEngine {
                     let channels = self.channels.clone();
                     let total_duration_ms = self.total_duration_ms.clone();
                     let load_error = self.load_error.clone();
-                    let client = self.http_client.clone();
+                    let _client = self.http_client.clone();
                     let seek_target_ms = self.seek_target_ms.clone();
                     let pipe_bytes_sent = self.pipe_bytes_sent.clone();
                     let pipe_total_bytes = self.pipe_total_bytes.clone();
@@ -1074,7 +1091,7 @@ impl PlaybackEngine {
                     let handle = thread::spawn(move || {
                         crate::audio::stream::handling::play_live_internal(
                             seek_url,
-                            client,
+                _client,
                             audio_queue,
                             buffer_ready,
                             is_playing_flag,

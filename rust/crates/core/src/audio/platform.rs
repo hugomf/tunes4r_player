@@ -47,11 +47,10 @@ pub fn platform_init() {
             .with_tag("tunes4r"),
     );
 
-    if let Some(ctx) = ndk_context::android_context() {
-        let vm = unsafe { JavaVM::from_raw(ctx.vm().as_ptr() as *mut std::ffi::c_void) }.ok();
-        if let Some(jvm) = vm {
-            let _ = JVM.set(jvm);
-        }
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { JavaVM::from_raw(ctx.vm() as *mut jni::sys::JavaVM) }.ok();
+    if let Some(jvm) = vm {
+        let _ = JVM.set(jvm);
     }
     let _ = JVM.get().map(|jvm| jvm.attach_current_thread());
 }

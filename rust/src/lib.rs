@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 //! Tunes4R Audio Engine — FFI surface crate
 //!
 //! Re-exports from tunes4r-core (audio engine, DSP, models) and
