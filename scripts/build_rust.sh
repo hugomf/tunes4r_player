@@ -61,9 +61,9 @@ build_ios() {
   local profile="release"
   [ "$BUILD_TYPE" = "debug" ] && profile="debug"
 
-  cargo rustc --target aarch64-apple-ios --"$profile" --crate-type staticlib
-  cargo rustc --target aarch64-apple-ios-sim --"$profile" --crate-type staticlib
-  cargo rustc --target x86_64-apple-ios --"$profile" --crate-type staticlib
+  cargo rustc --lib --target aarch64-apple-ios --"$profile" --crate-type staticlib
+  cargo rustc --lib --target aarch64-apple-ios-sim --"$profile" --crate-type staticlib
+  cargo rustc --lib --target x86_64-apple-ios --"$profile" --crate-type staticlib
 
   cd "$PLUGIN_DIR"
   mkdir -p ios/Frameworks

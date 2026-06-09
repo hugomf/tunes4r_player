@@ -174,7 +174,7 @@ impl LogBuffer {
 // ─────────────────────────────────────────────────────────────────────────────
 // Spectrum state (uses real GLOBAL_SPECTRUM when playing)
 // ─────────────────────────────────────────────────────────────────────────────
-const N_BARS: usize = 18;
+const N_BARS: usize = 32;
 
 struct SpectrumState {
     smoothed: [f32; N_BARS],
@@ -201,7 +201,6 @@ impl SpectrumState {
             }
             return;
         }
-        // Read real spectrum from the engine
         let raw: Vec<f32> = {
             let guard = GLOBAL_SPECTRUM.read().unwrap();
             guard.iter().take(N_BARS).copied().collect()
@@ -215,13 +214,13 @@ impl SpectrumState {
                 (c - 0.10 * (c - t)).max(0.0)
             };
             let amp = self.smoothed[i];
-            if amp >= self.peaks[i] {
-                self.peak_vel[i] = (amp - self.peaks[i]) * 2.0;
-                self.peaks[i] = amp;
-            } else {
-                self.peak_vel[i] -= 0.04 * delta / 0.033;
-                self.peaks[i] = (self.peaks[i] + self.peak_vel[i]).clamp(0.0, 1.0);
+            let dt = delta / 0.033;
+            if amp > self.peaks[i] {
+                self.peak_vel[i] += (amp - self.peaks[i]) * 2.0;
             }
+            self.peak_vel[i] -= 0.025 * dt;
+            self.peak_vel[i] *= 0.88;
+            self.peaks[i] = (self.peaks[i] + self.peak_vel[i] * dt).clamp(0.0, 1.0);
         }
     }
 }
@@ -834,7 +833,10 @@ impl<'a> Widget for LcdPanel<'a> {
         // Bars area (padded: 2 cols from left, 1 row from bottom)
         let bars_x = spec_x + 2;
         let bars_w = spec_w.saturating_sub(3);
-        let bars_h = spec_h.saturating_sub(1);
+        let bar_max_h = 8u16;
+        let raw_h = spec_h.saturating_sub(1);
+        let bars_h = raw_h.min(bar_max_h);
+        let bar_skip = (raw_h - bars_h) / 2;
         if bars_w == 0 || bars_h == 0 {
             return;
         }
@@ -848,36 +850,37 @@ impl<'a> Widget for LcdPanel<'a> {
             let peak = self.spectrum.peaks[i];
 
             let filled = (amp * total_cells).round() as u16;
+            let peak_row = if peak > 0.02 {
+                (peak * total_cells).round() as u16
+            } else {
+                0
+            };
             let bx = bars_x + i as u16;
-            for row in 0..bars_h {
-                let ry = spec_y_start + (bars_h - 1 - row);
+
+            let render_top = peak_row.max(filled).min(bars_h);
+            for row in 0..render_top {
+                let ry = spec_y_start + bar_skip + (raw_h - 1 - row);
                 if ry >= inner.bottom() || bx >= inner.right() {
                     continue;
                 }
-                if row >= filled {
-                    break;
-                }
-                let n = row as f32 / bars_h as f32;
-                let color = if n < 0.25 {
-                    C_SPEC_GRN
-                } else if n < 0.55 {
-                    C_SPEC_DKB
+                let is_top = row == render_top - 1;
+                let is_peak = is_top && peak_row > 0 && row >= filled;
+                if is_peak {
+                    buf[(bx, ry)]
+                        .set_char('━')
+                        .set_fg(Color::White)
+                        .set_bg(C_LCD_BG);
                 } else {
-                    C_SPEC_AMB
-                };
-                buf[(bx, ry)].set_char('█').set_fg(color).set_bg(C_LCD_BG);
-            }
-
-            if peak > 0.02 {
-                let peak_row = (peak * total_cells).round() as u16;
-                if peak_row > 0 && peak_row <= bars_h {
-                    let ry = spec_y_start + (bars_h - peak_row);
-                    if ry < inner.bottom() && bx < inner.right() {
-                        buf[(bx, ry)]
-                            .set_char('━')
-                            .set_fg(Color::White)
-                            .set_bg(C_LCD_BG);
-                    }
+                    let color = match row {
+                        0 => Color::Rgb(0, 80, 0),
+                        1 => Color::Rgb(0, 200, 0),
+                        2 => Color::Rgb(210, 210, 0),
+                        3 => Color::Rgb(230, 140, 0),
+                        4 => Color::Rgb(230, 80, 0),
+                        5 => Color::Rgb(200, 0, 0),
+                        _ => Color::Rgb(255, 40, 40),
+                    };
+                    buf[(bx, ry)].set_char('█').set_fg(color).set_bg(C_LCD_BG);
                 }
             }
         }
