@@ -826,7 +826,6 @@ pub fn play_live_internal(
             .get(&url)
             .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
             .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
-            .header("Icy-MetaData", "0")
             .send()
         {
             Ok(r) if r.status().is_success() => r,
@@ -1436,7 +1435,6 @@ pub fn play_live_internal(
                     .get(&fetch_url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                     .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
-                    .header("Icy-MetaData", "0")
                     .send()
                     .await
                 {

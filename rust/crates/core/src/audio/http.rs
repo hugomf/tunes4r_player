@@ -108,6 +108,7 @@ pub fn build_blocking_http_client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .tcp_keepalive(Duration::from_secs(30))
+        .no_proxy()
         .build()
         .unwrap_or_default()
 }

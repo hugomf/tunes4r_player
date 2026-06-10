@@ -49,32 +49,6 @@ impl StreamSource for RadioSource {
         &self,
         _seek_to: Option<u64>,
     ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
-        #[cfg(not(target_os = "android"))]
-        {
-            let resp = self
-                .client
-                .get(&self.info.uri)
-                        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
-                .header("Icy-MetaData", "0")
-                .header("Connection", "close")
-                .send()
-                .map_err(|e| PlaybackError::HttpStream {
-                    operation: "GET".into(),
-                    detail: e.to_string(),
-                })?;
-
-            if !resp.status().is_success() {
-                return Err(PlaybackError::HttpStatus {
-                    url: self.info.uri.clone(),
-                    status_code: resp.status().as_u16(),
-                    detail: "radio stream returned error".into(),
-                });
-            }
-
-            Ok(Box::new(NonSeekable(resp)))
-        }
-
         #[cfg(target_os = "android")]
         {
             use crate::audio::stream::pipe;
@@ -91,52 +65,137 @@ impl StreamSource for RadioSource {
                 let rt = match tokio::runtime::Runtime::new() {
                     Ok(r) => r,
                     Err(e) => {
-                        fetch_writer
-                            .set_error(format!("Failed to create tokio runtime: {}", e));
+                        fetch_writer.set_error(format!("tokio runtime failed: {}", e));
                         return;
                     }
                 };
                 rt.block_on(async move {
-                    let mut resp = match client
-                        .get(&uri)
-                .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
-                        .header("Icy-MetaData", "0")
-                        .header("Connection", "close")
-                        .send()
-                        .await
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            fetch_writer.set_error(format!("HTTP request failed: {}", e));
+                    loop {
+                        let mut resp = match client
+                            .get(&uri)
+                            .header("User-Agent", "Mozilla/5.0 (Android) AppleWebKit/537.36")
+                            .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+                            .header("Icy-MetaData", "1")
+                            .send()
+                            .await
+                        {
+                            Ok(r) => r,
+                            Err(e) => {
+                                fetch_writer.set_error(format!("HTTP request failed: {}", e));
+                                return;
+                            }
+                        };
+
+                        if !resp.status().is_success() {
+                            fetch_writer.set_error(format!("HTTP error: {}", resp.status()));
                             return;
                         }
-                    };
 
-                    if !resp.status().is_success() {
-                        fetch_writer
-                            .set_error(format!("HTTP error: {}", resp.status()));
-                        return;
-                    }
+                        let stream_done = loop {
+                            match resp.chunk().await {
+                                Ok(Some(data)) => fetch_writer.push(&data),
+                                Ok(None) => {
+                                    fetch_writer.end();
+                                    break true;
+                                }
+                                Err(e) => {
+                                    fetch_writer.set_error(format!("Stream error: {}", e));
+                                    break false;
+                                }
+                            }
+                        };
 
-                    loop {
-                        match resp.chunk().await {
-                            Ok(Some(data)) => fetch_writer.push(&data),
-                            Ok(None) => {
-                                fetch_writer.end();
-                                return;
-                            }
-                            Err(e) => {
-                                fetch_writer
-                                    .set_error(format!("Stream error: {}", e));
-                                return;
-                            }
-                        }
+                        if stream_done { return; }
+                        std::thread::sleep(std::time::Duration::from_secs(3));
                     }
                 });
             });
 
-            Ok(Box::new(reader))
+            return Ok(Box::new(reader));
         }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(Box::new(ReconnectingRadioReader::new(
+                self.client.clone(),
+                self.info.uri.clone(),
+            )))
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+struct ReconnectingRadioReader {
+    client: std::sync::Arc<crate::audio::engine::types::HttpClient>,
+    uri: String,
+    resp: Option<reqwest::blocking::Response>,
+}
+
+#[cfg(not(target_os = "android"))]
+impl ReconnectingRadioReader {
+    fn new(
+        client: std::sync::Arc<crate::audio::engine::types::HttpClient>,
+        uri: String,
+    ) -> Self {
+        Self { client, uri, resp: None }
+    }
+
+    fn open_connection(&mut self) -> Result<(), String> {
+        if self.resp.is_some() {
+            return Ok(());
+        }
+        let resp = self
+            .client
+            .get(&self.uri)
+            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+            .header("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+            .header("Icy-MetaData", "1")
+            .send()
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            self.resp = None;
+            return Err(format!("HTTP error: {}", resp.status()));
+        }
+
+        self.resp = Some(resp);
+        Ok(())
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+impl std::io::Read for ReconnectingRadioReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            if self.resp.is_none() {
+                if let Err(_) = self.open_connection() {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    continue;
+                }
+            }
+
+            let n = self.resp.as_mut().unwrap().read(buf).map_err(|e| {
+                self.resp = None;
+                std::io::Error::new(std::io::ErrorKind::Other, e)
+            })?;
+
+            if n == 0 {
+                self.resp = None;
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                continue;
+            }
+
+            return Ok(n);
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+impl std::io::Seek for ReconnectingRadioReader {
+    fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "radio streams do not support seeking",
+        ))
     }
 }

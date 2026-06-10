@@ -1,8 +1,8 @@
-//! RetryDecorator — wraps a StreamSource and reconnects on read errors.
+//! RetryDecorator — wraps a StreamSource and reconnects on read errors
+//! or EOF once some data has already been received.
 //!
-//! When the underlying reader fails, the decorator sleeps briefly then
-//! re-opens the inner source and resumes streaming. Useful for radio
-//! streams where the TCP connection may drop intermittently.
+//! This handles radio streams that send a finite audio chunk, then end
+//! the HTTP connection, requiring a reconnect to resume playback.
 
 use crate::audio::error::PlaybackError;
 use crate::audio::stream::pipe::new_pipe;
@@ -22,10 +22,10 @@ pub struct RetryDecorator {
 
 impl RetryDecorator {
     pub fn new(inner: Box<dyn StreamSource>) -> Self {
-        RetryDecorator::with_config(inner, 5, 2000)
+        Self::new_with_config(inner, 5, 2000)
     }
 
-    pub fn with_config(
+    pub fn new_with_config(
         inner: Box<dyn StreamSource>,
         max_retries: u32,
         retry_delay_ms: u64,
@@ -37,6 +37,14 @@ impl RetryDecorator {
             max_retries,
             retry_delay: Duration::from_millis(retry_delay_ms),
         }
+    }
+
+    pub fn with_config(
+        inner: Box<dyn StreamSource>,
+        max_retries: u32,
+        retry_delay_ms: u64,
+    ) -> Self {
+        Self::new_with_config(inner, max_retries, retry_delay_ms)
     }
 }
 
@@ -70,43 +78,40 @@ impl StreamSource for RetryDecorator {
             .spawn(move || {
                 let mut current: Box<dyn ReadSeek + Send + Sync + 'static> = initial;
                 let mut attempts: u32 = 0;
-                let mut buf = [0u8; 8192];
+                let mut buf = [0u8; 32768];
 
                 loop {
                     match current.read(&mut buf) {
                         Ok(0) => {
-                            log::info!("[retry] Inner source ended");
-                            break;
+                            if attempts >= max_retries {
+                                break;
+                            }
+                            attempts += 1;
+                            log::warn!(
+                                "[retry] EOF at connection end (attempt {}/{})",
+                                attempts,
+                                max_retries
+                            );
+                            thread::sleep(retry_delay);
+                            match inner.lock().open(seek_to) {
+                                Ok(new_reader) => current = new_reader,
+                                Err(_) => break,
+                            }
                         }
                         Ok(n) => {
                             attempts = 0;
                             writer.push(&buf[..n]);
                         }
-                        Err(e) => {
-                            attempts += 1;
-                            log::warn!(
-                                "[retry] Read error (attempt {}/{}): {}",
-                                attempts,
-                                max_retries,
-                                e
-                            );
-
-                            if attempts > max_retries {
-                                log::error!("[retry] Max retries ({}) exceeded", max_retries);
-                                writer.end();
-                                return;
+                        Err(_) => {
+                            if attempts >= max_retries {
+                                break;
                             }
-
+                            attempts += 1;
+                            log::warn!("[retry] Read error (attempt {}/{})", attempts, max_retries);
                             thread::sleep(retry_delay);
-
                             match inner.lock().open(seek_to) {
-                                Ok(new_reader) => {
-                                    log::info!("[retry] Re-connected, resuming stream");
-                                    current = new_reader;
-                                }
-                                Err(e) => {
-                                    log::error!("[retry] Re-open failed: {}", e);
-                                }
+                                Ok(new_reader) => current = new_reader,
+                                Err(_) => break,
                             }
                         }
                     }
@@ -175,7 +180,7 @@ mod tests {
         fn open(
             &self,
             _seek_to: Option<u64>,
-    ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
+        ) -> Result<Box<dyn ReadSeek + Send + Sync + 'static>, PlaybackError> {
             let data = self.data.clone();
             let fail_every = self.fail_every;
             Ok(Box::new(FickleReader {
@@ -224,7 +229,7 @@ mod tests {
     fn test_retry_recovers_from_errors() {
         let data: Vec<u8> = (0..200).collect();
         let source = FickleSource::new(data.clone(), 50);
-        let decorator = RetryDecorator::with_config(Box::new(source), 10, 10);
+        let decorator = RetryDecorator::with_config(Box::new(source), 20, 10);
 
         let mut reader = decorator.open(None).unwrap();
         let mut buf = Vec::new();

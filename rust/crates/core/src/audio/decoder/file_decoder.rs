@@ -563,7 +563,42 @@ pub fn play_file_internal(
     };
 
     'outer: loop {
-        let (mut format, mut decoder, track_id, channels, sample_rate, codec_params) =
+        // Determine output device config FIRST so prebuffered audio is
+        // correctly resampled to the device's native rate.  Previously
+        // this happened *after* prebuffering, causing the initial ~15s
+        // of decoded audio to play at the wrong speed whenever the
+        // file rate (e.g. 44.1 kHz FLAC or 96 kHz hi-res) differed
+        // from the device rate (typically 48 kHz on AAudio/Oboe).
+        let host = cpal::default_host();
+        let device = match host.default_output_device() {
+            Some(d) => d,
+            None => {
+                let err_msg = "No output device".to_string();
+                log::error!("[file] {}", err_msg);
+                *load_error.lock() = err_msg;
+                return;
+            }
+        };
+        let config = match crate::audio::stream::cpal_source::pick_output_config(&device) {
+            Some(c) => c,
+            None => {
+                let err_msg = "No suitable output config".to_string();
+                log::error!("[file] {}", err_msg);
+                *load_error.lock() = err_msg;
+                return;
+            }
+        };
+
+        let device_sample_rate = config.sample_rate;
+        sample_rate_out.store(device_sample_rate as u64, Ordering::Relaxed);
+        channels_out.store(config.channels as u64, Ordering::Relaxed);
+        log::info!(
+            "[file] Device output: {} Hz, {} ch",
+            device_sample_rate,
+            config.channels
+        );
+
+        let (mut format, mut decoder, track_id, channels, _sample_rate, codec_params) =
             match build_pipeline() {
                 Ok(p) => p,
                 Err(e) => {
@@ -571,9 +606,6 @@ pub fn play_file_internal(
                     return;
                 }
             };
-
-        sample_rate_out.store(sample_rate as u64, Ordering::Relaxed);
-        channels_out.store(channels as u64, Ordering::Relaxed);
 
         let seek_pos_ms = seek_target_ms.swap(0, Ordering::AcqRel);
         if seek_pos_ms > 0 {
@@ -605,9 +637,16 @@ pub fn play_file_internal(
             }
         }
 
-        let prebuffer_secs = 7u64;
-        let target_buffer_samples = (sample_rate as u64 * prebuffer_secs) as usize * channels as usize;
-        log::info!("[file] Pre-buffering {} samples ({} seconds)...", target_buffer_samples, prebuffer_secs);
+        // Larger prebuffer for low-end Android Automotive devices where
+        // the decode thread can be starved during app switches.
+        let prebuffer_secs = 15u64;
+        let target_buffer_samples = (device_sample_rate as u64 * prebuffer_secs) as usize
+            * config.channels as usize;
+        log::info!(
+            "[file] Pre-buffering {} samples ({} seconds)...",
+            target_buffer_samples,
+            prebuffer_secs
+        );
 
         let queue_for_decode = audio_queue.clone();
         queue_for_decode.lock().clear();
@@ -628,9 +667,12 @@ pub fn play_file_internal(
                         let decoded_rate = audio_buf.spec().rate();
                         let mut samples: Vec<f32> = Vec::new();
                         audio_buf.copy_to_vec_interleaved(&mut samples);
-                        if decoded_rate != sample_rate_out.load(Ordering::Relaxed) as u32 {
+                        if decoded_rate != device_sample_rate {
                             samples = crate::audio::stream::handling::resample_interleaved(
-                                &samples, decoded_rate, sample_rate_out.load(Ordering::Relaxed) as u32, channels_out.load(Ordering::Relaxed) as usize,
+                                &samples,
+                                decoded_rate,
+                                device_sample_rate,
+                                config.channels as usize,
                             );
                         }
                         buffered_samples += samples.len();
@@ -640,7 +682,10 @@ pub fn play_file_internal(
                         log::error!("[file] Decode error: {}", e);
                         prebuffer_error_count += 1;
                         if prebuffer_error_count >= MAX_PACKET_ERRORS {
-                            let err_msg = format!("Too many decode errors ({}): {}", prebuffer_error_count, e);
+                            let err_msg = format!(
+                                "Too many decode errors ({}): {}",
+                                prebuffer_error_count, e
+                            );
                             log::error!("[file] {}", err_msg);
                             *load_error.lock() = err_msg;
                             return;
@@ -657,7 +702,10 @@ pub fn play_file_internal(
                     log::error!("[file] Packet error: {}", e);
                     prebuffer_error_count += 1;
                     if prebuffer_error_count >= MAX_PACKET_ERRORS {
-                        let err_msg = format!("Too many packet errors ({}): {}", prebuffer_error_count, e);
+                        let err_msg = format!(
+                            "Too many packet errors ({}): {}",
+                            prebuffer_error_count, e
+                        );
                         log::error!("[file] {}", err_msg);
                         *load_error.lock() = err_msg;
                         return;
@@ -668,31 +716,6 @@ pub fn play_file_internal(
         }
 
         log::info!("[file] Pre-buffer complete: {} samples", buffered_samples);
-
-        let host = cpal::default_host();
-        let device = match host.default_output_device() {
-            Some(d) => d,
-            None => {
-                let err_msg = "No output device".to_string();
-                log::error!("[file] {}", err_msg);
-                *load_error.lock() = err_msg;
-                return;
-            }
-        };
-        let config = match crate::audio::stream::cpal_source::pick_output_config(&device) {
-            Some(c) => c,
-            None => {
-                let err_msg = "No suitable output config".to_string();
-                log::error!("[file] {}", err_msg);
-                *load_error.lock() = err_msg;
-                return;
-            }
-        };
-
-        let device_sample_rate = config.sample_rate;
-        sample_rate_out.store(device_sample_rate as u64, Ordering::Relaxed);
-        channels_out.store(config.channels as u64, Ordering::Relaxed);
-        log::info!("[file] Device output: {} Hz, {} ch", device_sample_rate, config.channels);
 
         if seek_pos_ms > 0 {
             let ch_out = config.channels as u64;
@@ -731,7 +754,9 @@ pub fn play_file_internal(
         let mut analyzer = crate::dsp::RmsSpectrumAnalyzer::new(device_sample_rate, band_count);
         crate::audio::engine::update_global_spectrum(vec![0.1f32; band_count]);
 
-        let max_queue_samples = (device_sample_rate as usize) * 10 * (config.channels as usize);
+        // 25-second max queue gives a generous shock absorber when
+        // app-switching or scrolling starves the decode thread.
+        let max_queue_samples = (device_sample_rate as usize) * 25 * (config.channels as usize);
         let mut packet_error_count = 0;
         let mut spectrum_accum: VecDeque<f32> = VecDeque::with_capacity(4096);
         let mut last_spectrum_update = std::time::Instant::now();
