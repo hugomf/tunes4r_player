@@ -131,19 +131,17 @@ fn packet_skip_seek(
     target_ms: u64,
     should_stop: &Arc<AtomicBool>,
 ) -> Result<SeekOutcome, SeekError> {
-    let sample_rate = codec_params.sample_rate.unwrap_or(44100) as f64;
-    let channels = codec_params
+    let initial_sample_rate = codec_params.sample_rate.unwrap_or(44100) as f64;
+    let initial_channels = codec_params
         .channels
         .as_ref()
         .map(|c| c.count())
         .unwrap_or(2) as u64;
 
-    // Target expressed in interleaved samples (the unit
-    // `copy_to_vec_interleaved` produces). This is the single source of
-    // truth for the comparison — keeping the unit consistent across
-    // platforms is what fixed the iOS off-by-`channels` bug.
-    let target_interleaved = ((target_ms as f64 / 1000.0) * sample_rate * channels as f64) as u64;
-    let mut skipped_interleaved: u64 = 0;
+    // We compute a preliminary target using codec params; the first decoded
+    // packet tells us the actual rate for AAC SBR streams, and we adjust.
+    let preliminary_target =
+        ((target_ms as f64 / 1000.0) * initial_sample_rate * initial_channels as f64) as u64;
 
     let mut registry = CodecRegistry::new();
     registry.register_audio_decoder::<symphonia_bundle_mp3::MpaDecoder>();
@@ -157,6 +155,10 @@ fn packet_skip_seek(
         .map_err(|e| SeekError::Codec(format!("{:?}", e)))?;
 
     let mut consecutive_errors: u32 = 0;
+    let mut skipped_interleaved: u64 = 0;
+    let mut actual_sample_rate: Option<u32> = None;
+    let mut actual_channels: Option<u16> = None;
+
     loop {
         if should_stop.load(Ordering::Relaxed) {
             return Ok(SeekOutcome {
@@ -189,7 +191,10 @@ fn packet_skip_seek(
                     );
                     return Err(SeekError::PacketSkipLimit(consecutive_errors));
                 }
-                warn!("[seek] Packet error: {} (attempt {}/{})", e, consecutive_errors, MAX_CONSECUTIVE_PACKET_ERRORS);
+                warn!(
+                    "[seek] Packet error: {} (attempt {}/{})",
+                    e, consecutive_errors, MAX_CONSECUTIVE_PACKET_ERRORS
+                );
                 thread::sleep(Duration::from_millis(10));
                 continue;
             }
@@ -201,6 +206,21 @@ fn packet_skip_seek(
 
         match skip_decoder.decode(&packet) {
             Ok(audio_buf) => {
+                // Detect actual sample rate on first decode (critical for AAC SBR)
+                if actual_sample_rate.is_none() {
+                    actual_sample_rate = Some(audio_buf.spec().rate());
+                    actual_channels = Some(audio_buf.spec().channels().count() as u16);
+                    if actual_sample_rate.unwrap() != codec_params.sample_rate.unwrap_or(44100) {
+                        info!(
+                            "[seek] Actual decoded rate {} Hz differs from codec params {} Hz \
+                             (AAC SBR stream)",
+                            actual_sample_rate.unwrap(),
+                            codec_params.sample_rate.unwrap_or(44100)
+                        );
+                    }
+                }
+                let channels = actual_channels.unwrap_or(initial_channels as u16) as u64;
+
                 let frames = audio_buf.frames() as u64;
                 let interleaved_in_packet =
                     frames.checked_mul(channels).ok_or(SeekError::Overflow)?;
@@ -208,12 +228,29 @@ fn packet_skip_seek(
                     .checked_add(interleaved_in_packet)
                     .ok_or(SeekError::Overflow)?;
 
-                if skipped_interleaved >= target_interleaved {
-                    let overshoot = skipped_interleaved - target_interleaved;
+                // After we know the actual rate, recompute target and check
+                if let Some(rate) = actual_sample_rate {
+                    let target_interleaved =
+                        ((target_ms as f64 / 1000.0) * rate as f64 * channels as f64) as u64;
+                    if skipped_interleaved >= target_interleaved {
+                        let overshoot = skipped_interleaved - target_interleaved;
+                        info!(
+                            "[seek] Packet-skip complete: skipped {} interleaved samples \
+                             (target: {}, residual to drop: {})",
+                            skipped_interleaved, target_interleaved, overshoot
+                        );
+                        return Ok(SeekOutcome {
+                            method: SeekMethod::PacketSkip,
+                            residual_samples_to_skip: overshoot,
+                        });
+                    }
+                } else if skipped_interleaved >= preliminary_target {
+                    // Fallback to preliminary target before we know actual rate
+                    let overshoot = skipped_interleaved - preliminary_target;
                     info!(
-                        "[seek] Packet-skip complete: skipped {} interleaved samples \
+                        "[seek] Packet-skip complete (prelim): skipped {} interleaved samples \
                          (target: {}, residual to drop: {})",
-                        skipped_interleaved, target_interleaved, overshoot
+                        skipped_interleaved, preliminary_target, overshoot
                     );
                     return Ok(SeekOutcome {
                         method: SeekMethod::PacketSkip,

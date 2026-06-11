@@ -253,11 +253,27 @@ pub fn play_file_internal(
         match decoder.decode(&packet) {
             Ok(audio_buf) => {
                 let decoded_rate = audio_buf.spec().rate();
+                let decoded_ch = audio_buf.spec().channels().count();
+                if decoded_rate != sample_rate {
+                    info!(
+                        "[file] Actual decoded rate {} Hz differs from codec params {} Hz \
+                         (common in AAC/ADTS streams) — using actual rate for timing",
+                        decoded_rate, sample_rate
+                    );
+                    sample_rate_out.store(decoded_rate as u64, Ordering::Relaxed);
+                }
+                if decoded_ch != channels {
+                    info!(
+                        "[file] Actual decoded channels {} differs from codec params {}",
+                        decoded_ch, channels
+                    );
+                    channels_out.store(decoded_ch as u64, Ordering::Relaxed);
+                }
                 let mut samples: Vec<f32> = Vec::new();
                 audio_buf.copy_to_vec_interleaved(&mut samples);
                 if decoded_rate != device_sample_rate {
                     samples = resample_interleaved(
-                        &samples, decoded_rate, device_sample_rate, config.channels as usize,
+                        &samples, decoded_rate, device_sample_rate, decoded_ch,
                     );
                 }
                 audio_queue.lock().extend(samples);
@@ -334,12 +350,27 @@ pub fn play_file_internal(
         match decoder.decode(&packet) {
             Ok(audio_buf) => {
                 let decoded_rate = audio_buf.spec().rate();
+                let decoded_ch = audio_buf.spec().channels().count();
+                if decoded_rate != sample_rate {
+                    info!(
+                        "[file] Actual decoded rate {} Hz differs from codec params {} Hz",
+                        decoded_rate, sample_rate
+                    );
+                    sample_rate_out.store(decoded_rate as u64, Ordering::Relaxed);
+                }
+                if decoded_ch != channels {
+                    info!(
+                        "[file] Actual decoded channels {} differs from codec params {}",
+                        decoded_ch, channels
+                    );
+                    channels_out.store(decoded_ch as u64, Ordering::Relaxed);
+                }
                 let mut samples: Vec<f32> = Vec::new();
                 audio_buf.copy_to_vec_interleaved(&mut samples);
 
                 if decoded_rate != device_sample_rate {
                     samples = resample_interleaved(
-                        &samples, decoded_rate, device_sample_rate, config.channels as usize,
+                        &samples, decoded_rate, device_sample_rate, decoded_ch,
                     );
                 }
 
@@ -665,6 +696,21 @@ pub fn play_file_internal(
                     Ok(audio_buf) => {
                         prebuffer_error_count = 0;
                         let decoded_rate = audio_buf.spec().rate();
+                        let decoded_ch = audio_buf.spec().channels().count() as usize;
+                        if decoded_rate != sample_rate {
+                            log::info!(
+                                "[file] Actual decoded rate {} Hz differs from codec params {} Hz",
+                                decoded_rate, sample_rate
+                            );
+                            sample_rate_out.store(decoded_rate as u64, Ordering::Relaxed);
+                        }
+                        if decoded_ch != channels as usize {
+                            log::info!(
+                                "[file] Actual decoded channels {} differs from codec params {}",
+                                decoded_ch, channels
+                            );
+                            channels_out.store(decoded_ch as u64, Ordering::Relaxed);
+                        }
                         let mut samples: Vec<f32> = Vec::new();
                         audio_buf.copy_to_vec_interleaved(&mut samples);
                         if decoded_rate != device_sample_rate {
@@ -672,7 +718,7 @@ pub fn play_file_internal(
                                 &samples,
                                 decoded_rate,
                                 device_sample_rate,
-                                config.channels as usize,
+                                decoded_ch,
                             );
                         }
                         buffered_samples += samples.len();

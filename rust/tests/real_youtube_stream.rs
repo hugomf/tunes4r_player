@@ -7,7 +7,7 @@ use anyhow::Result;
 use tunes4r::audio::error::PlaybackError;
 use tunes4r::audio::stream::decorator::adaptive::AdaptiveBufferDecorator;
 use tunes4r::audio::stream::decorator::caching::ByteCache;
-use tunes4r::audio::stream::handling::NonSeekableRead;
+use tunes4r::audio::stream::handling::ByteCountingRead;
 use tunes4r::audio::stream::source::{Capability, ReadSeek, StreamSource};
 
 pub struct RealYouTubeStream {

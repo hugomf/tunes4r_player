@@ -106,6 +106,35 @@ pub fn resample_interleaved(
     output
 }
 
+/// Upmix interleaved audio from `input_channels` to `output_channels` per frame.
+///
+/// When `output_channels > input_channels`, each input frame's samples are
+/// duplicated across the extra output channels. This is used to upmix mono
+/// decoder output to stereo for the CPAL audio device.
+///
+/// The audio queue must always hold samples matching the CPAL device's
+/// configured channel count — the output callback processes frames with
+/// `chunks_exact_mut(output_channels)`. If upmixing is skipped, the device
+/// consumes queue samples faster than the decode loop produces them,
+/// resulting in accelerated playback (see ADR-001).
+pub fn upmix_interleaved(
+    samples: &[f32],
+    input_channels: usize,
+    output_channels: usize,
+) -> Vec<f32> {
+    if input_channels == output_channels {
+        return samples.to_vec();
+    }
+    let out_frames = samples.len() / input_channels;
+    let mut out = Vec::with_capacity(out_frames * output_channels);
+    for frame in samples.chunks_exact(input_channels) {
+        for _ in 0..(output_channels / input_channels) {
+            out.extend_from_slice(frame);
+        }
+    }
+    out
+}
+
 #[cfg(not(target_os = "android"))]
 type AudioBuffer = crate::audio::stream::cpal_source::AudioBuffer;
 
@@ -249,6 +278,7 @@ fn playback_loop(
     audio_queue: &AudioBuffer,
     output_sample_rate: u32,
     channels: usize,
+    output_channels: usize,
     should_stop: &Arc<AtomicBool>,
     samples_played: &AtomicU64,
     seek_request: &AtomicU64,
@@ -294,7 +324,7 @@ fn playback_loop(
                     break;
                 }
             }
-            let ch_out = channels as u64;
+            let ch_out = output_channels as u64;
             let rate_out = output_sample_rate as u64;
             let initial_samples = (seek_target * rate_out * ch_out) / 1000;
             samples_played.store(initial_samples, Ordering::Relaxed);
@@ -311,6 +341,12 @@ fn playback_loop(
                     let mut samples: Vec<f32> = Vec::new();
                     audio_buf.copy_to_vec_interleaved(&mut samples);
                     let decoded_rate = audio_buf.spec().rate();
+                    if decoded == 0 || decoded.is_multiple_of(25) {
+                        info!(
+                            "[stream] Decoded packet {}: rate={}, ch={}, samples_in={}, output_rate={}",
+                            decoded, decoded_rate, audio_buf.spec().channels().count(), samples.len(), output_sample_rate
+                        );
+                    }
                     if decoded_rate != output_sample_rate {
                         samples = resample_interleaved(
                             &samples, decoded_rate, output_sample_rate, channels,
@@ -338,6 +374,8 @@ fn playback_loop(
                         }
                         last_spectrum_time = now;
                     }
+
+                    samples = upmix_interleaved(&samples, channels, output_channels);
 
                     audio_queue.lock().extend(samples);
                     decoded += 1;
@@ -564,8 +602,9 @@ pub fn decode_and_play_from_read(
         config.sample_rate, config.channels
     );
     let output_sample_rate = config.sample_rate;
+    let output_channels = config.channels as usize;
     let target_buffer_samples =
-        (output_sample_rate as f32 * 7.0) as usize * channels;
+        (output_sample_rate as f32 * 7.0) as usize * output_channels;
 
     // ── Phase 3: Seek (if requested) ──
     let mut samples_to_skip: u64 = 0;
@@ -625,14 +664,23 @@ pub fn decode_and_play_from_read(
             Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
                 Ok(audio_buf) => {
                     let decoded_rate = audio_buf.spec().rate();
-                    let ch = audio_buf.spec().channels().count() as u16;
+                    let decoded_channels = audio_buf.spec().channels().count() as u16;
                     let mut samples: Vec<f32> = Vec::new();
                     audio_buf.copy_to_vec_interleaved(&mut samples);
+                    info!(
+                        "[stream] Prebuffer decoded: rate={}, ch={}, samples_in={}, output_rate={}",
+                        decoded_rate, decoded_channels, samples.len(), output_sample_rate
+                    );
                     if decoded_rate != output_sample_rate {
                         samples = resample_interleaved(
-                            &samples, decoded_rate, output_sample_rate, ch as usize,
+                            &samples, decoded_rate, output_sample_rate, decoded_channels as usize,
+                        );
+                        info!(
+                            "[stream] Prebuffer resampled: from {} to {}, samples_out={}",
+                            decoded_rate, output_sample_rate, samples.len()
                         );
                     }
+                    samples = upmix_interleaved(&samples, decoded_channels as usize, output_channels);
 
                     if samples_to_skip > 0 {
                         let n = samples.len() as u64;
@@ -716,6 +764,7 @@ pub fn decode_and_play_from_read(
         &audio_queue,
         output_sample_rate,
         channels,
+        output_channels,
         &should_stop,
         &samples_played,
         &seek_request,
@@ -729,7 +778,7 @@ pub fn decode_and_play_from_read(
         &samples_played,
         &total_duration_ms,
         sample_rate,
-        channels,
+        output_channels,
     );
 
     info!(
@@ -1486,4 +1535,69 @@ pub fn play_live_internal(
         load_error,
         seek_target_ms,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_upmix_mono_to_stereo() {
+        let mono = vec![0.5, 0.25, 0.0, -0.5, -1.0];
+        let stereo = upmix_interleaved(&mono, 1, 2);
+        assert_eq!(stereo.len(), mono.len() * 2);
+        assert_eq!(stereo, vec![0.5, 0.5, 0.25, 0.25, 0.0, 0.0, -0.5, -0.5, -1.0, -1.0]);
+    }
+
+    #[test]
+    fn test_upmix_same_channels_is_noop() {
+        let data = vec![0.1, 0.2, 0.3, 0.4];
+        let out = upmix_interleaved(&data, 2, 2);
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn test_upmix_empty_input() {
+        let empty: Vec<f32> = vec![];
+        let out = upmix_interleaved(&empty, 1, 2);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_upmix_identity_single_channel() {
+        let data = vec![0.5, -0.5, 0.0];
+        let out = upmix_interleaved(&data, 1, 1);
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn test_upmix_mono_to_quad() {
+        let mono = vec![0.5, 0.25];
+        let quad = upmix_interleaved(&mono, 1, 4);
+        assert_eq!(quad, vec![0.5, 0.5, 0.5, 0.5, 0.25, 0.25, 0.25, 0.25]);
+    }
+
+    #[test]
+    fn test_resample_interleaved_identity() {
+        let data = vec![0.5, 0.25, 0.0, -0.25];
+        let out = resample_interleaved(&data, 44100, 44100, 1);
+        assert_eq!(out, data);
+    }
+
+    #[test]
+    fn test_resample_interleaved_empty() {
+        let empty: Vec<f32> = vec![];
+        let out = resample_interleaved(&empty, 44100, 48000, 1);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_resample_interleaved_basic_upsample() {
+        let input = vec![0.0, 1.0, 0.0];
+        let out = resample_interleaved(&input, 22050, 44100, 1);
+        // 22050→44100 is 2× → expect ~6 samples
+        assert_eq!(out.len(), 6);
+        assert_eq!(out[0], 0.0);
+        assert_eq!(out[out.len() - 1], 0.0);
+    }
 }

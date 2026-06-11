@@ -440,3 +440,58 @@ All seeks ~100ms, zero new HTTP connections. ~80% faster than session 17 (~500ms
 - `cargo build --release` — 0 errors
 - `flutter test --dart-define=YT_TEST=1 test/yt_stream_seek_test.dart` — **All tests passed**
 - 55 second test: 30s initial play + 5×5s segments + 5 seeks ≈ 55s total
+
+## Session 19/20 — HE-AAC stream "too fast" fix: mono→stereo upmix (2026-06-11)
+
+### Goal
+Diagnose and fix why a live HE-AAC v2 radio stream (`XHMFMAAC_SC.aac`) plays at double speed.
+
+### Root cause: mono → stereo channel mismatch
+
+**Diagnostic logs confirmed:**
+```
+Prebuffer decoded: rate=22050, ch=1, samples_in=1024, output_rate=48000
+Prebuffer resampled: from 22050 to 48000, samples_out=2230
+Decoded packet 0: rate=22050, ch=1, samples_in=1024, output_rate=48000
+```
+
+Each frame produces **2230 mono samples** at 48000 Hz (correct per-frame timing). But the CPAL output callback (`cpal_source.rs`) is configured for **48000 Hz × 2 channels** = 96000 samples/sec consumption rate. The decode loop pushed **mono** samples into the queue, and the callback consumed them at **2× speed**:
+
+- 2230 queue samples / 96000 = 23.2ms of playback per frame
+- But 1024 AAC samples / 22050 = **46.4ms of actual audio per frame**
+- **2× speed!**
+
+### Fix
+Added **mono→stereo upmix** after resampling, before pushing to the audio queue:
+
+1. **`decode_and_play_from_read`**: Added `output_channels = config.channels as usize` from CPAL device config
+2. **Prebuffer**: After resample, expand mono to stereo (duplicate each sample to L+R)
+3. **`playback_loop`**: Added `output_channels` parameter. After resample + spectrum accumulation, expand mono to stereo before queue push
+4. **`drain_queue`**: Uses `output_channels` for duration estimation (samples_played now counts stereo samples)
+5. **Seek path**: Uses `output_channels` for position counter seeding
+
+Total change: ~20 lines added across 3 functions, no new dependencies.
+
+### Files changed
+- `rust/crates/core/src/audio/stream/handling.rs`: `decode_and_play_from_read` (output_channels var, target size), prebuffer loop (upmix), `playback_loop` (new parameter + upmix before push), `drain_queue` signature + call sites
+
+### Verification
+- `cargo check` — 0 errors, 1 pre-existing warning (`NonSeekable` unused import in radio.rs)
+- `cargo test -p tunes4r-core -- upmix` — 5/5 pass
+- `cargo test -p tunes4r-core -- resample` — 3/3 pass
+
+### Documentation
+- `docs/adr/001-audio-queue-channel-contract.md` — explains the queue channel invariant and why upmixing is required
+
+### Tests added
+- `test_upmix_mono_to_stereo`: 1→2 channel upmix duplicates each sample
+- `test_upmix_same_channels_is_noop`: identity for equal channel counts
+- `test_upmix_empty_input`: empty in → empty out
+- `test_upmix_identity_single_channel`: 1→1 returns clone
+- `test_upmix_mono_to_quad`: 1→4 expansion works
+- `test_resample_interleaved_identity`: same rate → clone
+- `test_resample_interleaved_empty`: empty in → empty out
+- `test_resample_interleaved_basic_upsample`: 22050→44100 doubles sample count
+
+### Extracted
+- `pub fn upmix_interleaved(samples: &[f32], input_channels: usize, output_channels: usize) -> Vec<f32>` — generic channel upmix helper used by both prebuffer and playback_loop, replacing the inline duplicated code
