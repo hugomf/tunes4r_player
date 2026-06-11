@@ -6,8 +6,6 @@ use crate::audio::engine::types::HttpClient;
 use crate::audio::error::PlaybackError;
 use crate::models::StreamType;
 
-#[cfg(not(target_os = "android"))]
-use super::NonSeekable;
 use super::{Capability, ReadSeek, SourceInfo, SourceKind, StreamSource};
 use std::sync::Arc;
 

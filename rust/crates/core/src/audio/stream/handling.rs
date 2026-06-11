@@ -139,6 +139,18 @@ pub fn upmix_interleaved(
 type AudioBuffer = crate::audio::stream::cpal_source::AudioBuffer;
 
 #[cfg(not(target_os = "android"))]
+const PREBUFFER_SECS: f32 = 7.0;
+
+#[cfg(not(target_os = "android"))]
+const MAX_PACKET_ERRORS: u32 = 50;
+
+#[cfg(not(target_os = "android"))]
+const SPECTRUM_UPDATE_MS: u64 = 100;
+
+#[cfg(not(target_os = "android"))]
+const SPECTRUM_CAPACITY: usize = 8192;
+
+#[cfg(not(target_os = "android"))]
 struct DecodeCtx {
     sample_rate_out: Arc<AtomicU64>,
     channels_out: Arc<AtomicU64>,
@@ -179,10 +191,7 @@ fn probe_format(
     };
 
     let track = match probed.first_track(symphonia::core::formats::TrackType::Audio) {
-        Some(track) => {
-            info!("[stream] Found audio track: id={}", track.id);
-            track
-        }
+        Some(track) => track,
         None => {
             let err_msg = "No audio track found".to_string();
             error!("[stream] {}", err_msg);
@@ -191,7 +200,8 @@ fn probe_format(
         }
     };
 
-    let _codec_params = match track.codec_params.as_ref() {
+    let track_id = track.id;
+    let codec_params = match track.codec_params.as_ref() {
         Some(symphonia::core::codecs::CodecParameters::Audio(params)) => {
             info!(
                 "[stream] Codec params: sample_rate={:?}, channels={:?}",
@@ -207,50 +217,11 @@ fn probe_format(
         }
     };
 
-    let duration_ms = {
-        let time_base = probed
-            .first_track(symphonia::core::formats::TrackType::Audio)
-            .and_then(|t| t.time_base)
-            .unwrap_or_else(|| TimeBase::try_from_recip(44100).unwrap_or_default());
-        if let Some(media_duration) = probed.media_info().duration {
-            let ts = Timestamp::new(media_duration.get() as i64);
-            let time = time_base.calc_time(ts).unwrap_or_default();
-            time.as_millis() as u64
-        } else {
-            0
-        }
-    };
-    if duration_ms > 0 {
-        info!("[stream] Stream duration: {} ms", duration_ms);
-        ctx.total_duration_ms.store(duration_ms, Ordering::Relaxed);
-    }
-
-    let track = match probed.first_track(symphonia::core::formats::TrackType::Audio) {
-        Some(track) => track,
-        None => {
-            let err_msg = "No audio track found".to_string();
-            debug!("[stream] {}", err_msg);
-            *ctx.load_error.lock() = err_msg;
-            return None;
-        }
-    };
-
-    let track_id = track.id;
-    let codec_params = match track.codec_params.as_ref() {
-        Some(symphonia::core::codecs::CodecParameters::Audio(params)) => params.clone(),
-        _ => {
-            let err_msg = "No audio codec params".to_string();
-            debug!("[stream] {}", err_msg);
-            *ctx.load_error.lock() = err_msg;
-            return None;
-        }
-    };
-
     let sample_rate = match codec_params.sample_rate {
         Some(rate) => rate,
         None => {
             let err_msg = "No sample rate".to_string();
-            debug!("[stream] {}", err_msg);
+            error!("[stream] {}", err_msg);
             *ctx.load_error.lock() = err_msg;
             return None;
         }
@@ -265,6 +236,23 @@ fn probe_format(
     debug!("[stream] Stream: {} Hz, {} channels", sample_rate, channels);
     ctx.sample_rate_out.store(sample_rate as u64, Ordering::Relaxed);
     ctx.channels_out.store(channels as u64, Ordering::Relaxed);
+
+    let duration_ms = {
+        let time_base = track
+            .time_base
+            .unwrap_or_else(|| TimeBase::try_from_recip(sample_rate).unwrap_or_default());
+        if let Some(media_duration) = probed.media_info().duration {
+            let ts = Timestamp::new(media_duration.get() as i64);
+            let time = time_base.calc_time(ts).unwrap_or_default();
+            time.as_millis() as u64
+        } else {
+            0
+        }
+    };
+    if duration_ms > 0 {
+        info!("[stream] Stream duration: {} ms", duration_ms);
+        ctx.total_duration_ms.store(duration_ms, Ordering::Relaxed);
+    }
 
     let format: Box<dyn FormatReader> = probed;
     Some((format, track_id, codec_params, sample_rate, channels, duration_ms))
@@ -338,6 +326,7 @@ fn playback_loop(
         match format.next_packet() {
             Ok(Some(packet)) if packet.track_id == track_id => match decoder.decode(&packet) {
                 Ok(audio_buf) => {
+                    consecutive_packet_errors = 0;
                     let mut samples: Vec<f32> = Vec::new();
                     audio_buf.copy_to_vec_interleaved(&mut samples);
                     let decoded_rate = audio_buf.spec().rate();
@@ -355,10 +344,12 @@ fn playback_loop(
 
                     // Spectrum accumulation in the decode loop (matches play_file_internal pattern).
                     for &s in &samples {
-                        spectrum_accum.push_back(s);
+                        if spectrum_accum.len() < SPECTRUM_CAPACITY {
+                            spectrum_accum.push_back(s);
+                        }
                     }
                     let now = std::time::Instant::now();
-                    if now.duration_since(last_spectrum_time).as_millis() >= 100 {
+                    if now.duration_since(last_spectrum_time).as_millis() >= SPECTRUM_UPDATE_MS as u128 {
                         let raw: Vec<f32> = spectrum_accum.drain(..).collect();
                         if raw.len() >= channels {
                             let total = raw.len() - (raw.len() % channels);
@@ -401,7 +392,7 @@ fn playback_loop(
             Err(e) => {
                 consecutive_packet_errors += 1;
                 debug!("[stream] Packet error ({}): {}", consecutive_packet_errors, e);
-                if consecutive_packet_errors >= 50 {
+                if consecutive_packet_errors >= MAX_PACKET_ERRORS {
                     info!("[stream] Too many consecutive packet errors ({})", consecutive_packet_errors);
                     break;
                 }
@@ -604,7 +595,7 @@ pub fn decode_and_play_from_read(
     let output_sample_rate = config.sample_rate;
     let output_channels = config.channels as usize;
     let target_buffer_samples =
-        (output_sample_rate as f32 * 7.0) as usize * output_channels;
+        (output_sample_rate as f32 * PREBUFFER_SECS) as usize * output_channels;
 
     // ── Phase 3: Seek (if requested) ──
     let mut samples_to_skip: u64 = 0;
@@ -688,8 +679,11 @@ pub fn decode_and_play_from_read(
                             samples_to_skip -= n;
                             continue;
                         }
-                        samples.drain(0..samples_to_skip as usize);
-                        samples_to_skip = 0;
+                        let skip = (samples_to_skip as usize).min(samples.len());
+                        if skip > 0 {
+                            samples.drain(0..skip);
+                            samples_to_skip -= skip as u64;
+                        }
                     }
 
                     buffered += samples.len();
@@ -708,7 +702,7 @@ pub fn decode_and_play_from_read(
             Err(e) => {
                 prebuffer_packet_errors += 1;
                 debug!("[stream] Prebuffer packet error ({}): {}", prebuffer_packet_errors, e);
-                if prebuffer_packet_errors >= 50 {
+                if prebuffer_packet_errors >= MAX_PACKET_ERRORS {
                     warn!("[stream] Too many prebuffer packet errors ({})", prebuffer_packet_errors);
                     break;
                 }
@@ -916,9 +910,6 @@ pub fn play_live_internal(
 // Android-specific implementations (share the same module paths as
 // desktop, so callers in commands.rs use a single module namespace).
 // ═══════════════════════════════════════════════════════════════════════
-// Android-specific implementations (share the same module paths as
-// desktop, so callers in commands.rs use a single module namespace).
-// ═══════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "android")]
 use cpal::traits::HostTrait;
@@ -994,28 +985,6 @@ fn get_codec_registry() -> CodecRegistry {
     registry.register_audio_decoder::<symphonia_bundle_flac::FlacDecoder>();
     registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
     registry
-}
-
-#[cfg(target_os = "android")]
-#[allow(dead_code)]
-fn probe_audio_duration(bytes: &[u8], _len: usize, _sample_rate: u64) -> Option<u64> {
-    let cursor = std::io::Cursor::new(bytes);
-    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
-    let mut format = symphonia::default::get_probe()
-        .probe(&Hint::new(), mss, FormatOptions::default(), MetadataOptions::default())
-        .ok()?;
-    let track = format.default_track(symphonia::core::formats::TrackType::Audio)?;
-    let codec_params = track.codec_params.as_ref()?;
-    if !matches!(codec_params, symphonia::core::codecs::CodecParameters::Audio(_)) {
-        return None;
-    }
-    let sample_rate = match codec_params {
-        symphonia::core::codecs::CodecParameters::Audio(params) => params.sample_rate.unwrap_or(44100),
-        _ => 44100,
-    };
-    let time_base = track.time_base
-        .unwrap_or_else(|| TimeBase::try_from_recip(sample_rate).unwrap_or_default());
-    Some(crate::audio::decoder::file_decoder::extract_duration(&mut *format, time_base))
 }
 
 #[cfg(target_os = "android")]
@@ -1251,8 +1220,11 @@ pub fn decode_and_play_from_read(
                             samples_to_skip -= n;
                             continue;
                         }
-                        samples.drain(0..samples_to_skip as usize);
-                        samples_to_skip = 0;
+                        let skip = (samples_to_skip as usize).min(samples.len());
+                        if skip > 0 {
+                            samples.drain(0..skip);
+                            samples_to_skip -= skip as u64;
+                        }
                     }
 
                     buffered_samples += samples.len();
