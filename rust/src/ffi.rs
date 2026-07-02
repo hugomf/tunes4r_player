@@ -97,41 +97,8 @@ fn init_logger() {
 }
 
 // ============================================================================
-// rustls-platform-verifier FFI bindings
+// JNI initialisation
 // ============================================================================
-
-/// Check if platform verifier is available
-#[cfg(feature = "rustls-platform-verifier")]
-#[no_mangle]
-pub extern "C" fn tunes4r_platform_verifier_available() -> bool {
-    true
-}
-
-#[cfg(not(feature = "rustls-platform-verifier"))]
-#[no_mangle]
-pub extern "C" fn tunes4r_platform_verifier_available() -> bool {
-    false
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "C" fn Java_com_ocelot_tunes4r_MainActivity_initRustlsPlatformVerifier(
-    mut env: jni::JNIEnv,
-    _class: jni::sys::jobject,
-    context: jni::sys::jobject,
-) {
-    use rustls_platform_verifier::android;
-    let context = unsafe { jni::objects::JObject::from_raw(context) };
-    let _ = android::init_hosted(&mut env, context);
-}
-
-#[no_mangle]
-pub extern "C" fn tunes4r_init_android_verifier(
-    _env: *mut std::os::raw::c_void,
-    _context: *mut std::os::raw::c_void,
-) {
-    error!("[ffi] tunes4r_init_android_verifier: not needed on this platform");
-}
 
 /// This function is required when building Rust code that interfaces with C++
 /// code (like cpal/rodio) for Android. It handles pure virtual function calls.

@@ -1,20 +1,9 @@
 #![allow(clippy::missing_safety_doc)]
-//! Tunes4R Audio Engine — FFI surface crate
-//!
-//! Re-exports from tunes4r-core (audio engine, DSP, models) and
-//! tunes4r-youtube (YouTube extraction), plus the FFI bindings for
-//! Flutter integration and the audio_http_fetch legacy module.
 
-pub use tunes4r_core::audio::{self, PlaybackEngine, PlaybackError};
-pub use tunes4r_core::dsp;
-pub use tunes4r_core::models::{
-    self, AdaptiveRingBuffer, DownloadBuffer, EngineEvent, PlaybackPosition, PlaybackState,
-    ENGINE_EVENT_END_OF_STREAM, ENGINE_EVENT_ERROR, ENGINE_EVENT_NONE,
-    ENGINE_EVENT_POSITION_RESET, ENGINE_EVENT_SEEK_COMPLETED, ENGINE_EVENT_SEEK_QUEUED,
-    ENGINE_EVENT_SEEK_STARTED, ENGINE_EVENT_STATE_CHANGED,
-};
-pub use tunes4r_youtube as youtube;
-pub use tunes4r_youtube::{
+pub use tunes4r_player::Player;
+pub use tunes4r_player::PlaybackState;
+pub use ytex as youtube;
+pub use ytex::{
     get_audio_stream_url, get_video_info, search_videos, YouTubeService,
 };
 
@@ -23,122 +12,85 @@ pub mod ffi;
 #[cfg(feature = "classifier")]
 pub mod classifier;
 
-pub mod audio_http_fetch;
-
 // ---------------------------------------------------------------------------
 // Rust-native convenience API
 // ---------------------------------------------------------------------------
 //
-// The functions below are thin wrappers around `tunes4r_core::PlaybackEngine`.
+// The functions below are thin wrappers around `tunes4r_player::Player`.
 // They serve as a convenient Rust-side API for CLI examples (`cargo run
 // --example`) and integration tests.  They are NOT called by the FFI layer
 // (`crate::ffi`) — that path goes directly through C-compatible extern
 // functions for use from Dart.
 // ---------------------------------------------------------------------------
 
-/// Create a new playback engine.
-pub fn create_playback_engine() -> PlaybackEngine {
-    PlaybackEngine::new().expect("Failed to create playback engine")
+/// Create a new player instance.
+pub fn create_player() -> Player {
+    Player::new()
 }
 
-/// Unified play: auto-detect source type from URI and start playback.
-pub fn play(engine: &mut PlaybackEngine, uri: String, buffer_size_ms: Option<u64>) -> Result<(), String> {
-    engine
-        .play(&uri, buffer_size_ms)
+/// Start playback from a URL (file path, HTTP URL, or YouTube URL/ID).
+pub fn play(player: &mut Player, url: String) -> Result<(), String> {
+    player
+        .start(&url)
         .map_err(|e| format!("Play error: {}", e))
 }
 
-/// Check whether the current source supports seeking.
-pub fn can_seek(engine: &mut PlaybackEngine) -> bool {
-    engine.source_supports(tunes4r_core::audio::stream::source::Capability::Seek)
-}
-
-/// Check whether the current source supports downloading.
-pub fn can_download(engine: &mut PlaybackEngine) -> bool {
-    engine.source_supports(tunes4r_core::audio::stream::source::Capability::Download)
-}
-
-/// Play a local file.
-pub fn play_file(engine: &mut PlaybackEngine, file_path: String) -> Result<(), String> {
-    engine
-        .play_file(&file_path)
+/// Start playback from a file path.
+pub fn play_file(player: &mut Player, file_path: String) -> Result<(), String> {
+    let url = format!("file://{}", file_path);
+    player
+        .start(&url)
         .map_err(|e| format!("Playback error: {}", e))
 }
 
-/// Play an HTTP stream.
-pub fn play_stream(engine: &mut PlaybackEngine, url: String) -> Result<(), String> {
-    engine
-        .play_stream(&url)
+/// Start playback from an HTTP stream.
+pub fn play_stream(player: &mut Player, url: String) -> Result<(), String> {
+    player
+        .start(&url)
         .map_err(|e| format!("Stream error: {}", e))
 }
 
 /// Pause playback.
-pub fn pause(engine: &mut PlaybackEngine) {
-    engine.pause();
+pub fn pause(player: &Player) {
+    player.set_paused(true);
 }
 
 /// Resume playback.
-pub fn resume(engine: &mut PlaybackEngine) {
-    engine.resume();
+pub fn resume(player: &Player) {
+    player.set_paused(false);
 }
 
 /// Stop playback.
-pub fn stop(engine: &mut PlaybackEngine) {
-    engine.stop();
+pub fn stop(player: &mut Player) {
+    player.stop();
 }
 
 /// Seek to position in milliseconds.
-pub fn seek(engine: &mut PlaybackEngine, position_ms: u64) -> Result<(), String> {
-    engine
-        .seek(position_ms)
-        .map_err(|e| format!("Seek error: {}", e))
+pub fn seek(player: &Player, position_ms: u64) {
+    player.seek(position_ms);
 }
 
-/// Skip forward by milliseconds.
-pub fn skip_forward(engine: &mut PlaybackEngine, ms: u64) -> Result<(), String> {
-    engine
-        .skip_forward(ms)
-        .map_err(|e| format!("Skip error: {}", e))
+/// Set volume gain (1.0 = normal).
+pub fn set_volume_gain(player: &Player, gain: f32) {
+    player.set_volume_gain(gain);
 }
 
-/// Skip backward by milliseconds.
-pub fn skip_backward(engine: &mut PlaybackEngine, ms: u64) -> Result<(), String> {
-    engine
-        .skip_backward(ms)
-        .map_err(|e| format!("Skip error: {}", e))
+/// Get current volume gain.
+pub fn get_volume_gain(player: &Player) -> f32 {
+    player.volume_gain()
 }
 
-/// Set volume (0.0 to 1.0).
-pub fn set_volume(engine: &PlaybackEngine, volume: f32) {
-    engine.set_volume(volume);
-}
-
-/// Get current volume.
-pub fn get_volume(engine: &PlaybackEngine) -> f32 {
-    engine.get_volume()
-}
-
-/// Set balance (0.0 = full left, 0.5 = center, 1.0 = full right).
-pub fn set_balance(engine: &PlaybackEngine, balance: f32) {
-    engine.set_balance(balance);
-}
-
-/// Get current balance.
-pub fn get_balance(engine: &PlaybackEngine) -> f32 {
-    engine.get_balance()
-}
-
-/// Check if playing.
-pub fn is_playing(engine: &mut PlaybackEngine) -> bool {
-    engine.is_playing()
+/// Get current playback position.
+pub fn get_position(player: &Player) -> (u64, u64) {
+    (player.position_ms(), player.total_duration_ms())
 }
 
 /// Get playback state.
-pub fn get_playback_state(engine: &mut PlaybackEngine) -> PlaybackState {
-    engine.get_state()
+pub fn get_playback_state(player: &Player) -> PlaybackState {
+    player.state()
 }
 
-/// Get current position.
-pub fn get_position(engine: &mut PlaybackEngine) -> PlaybackPosition {
-    engine.get_position()
+/// Check if currently playing.
+pub fn is_playing(player: &Player) -> bool {
+    player.state() == PlaybackState::Playing
 }

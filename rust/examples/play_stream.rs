@@ -1,5 +1,5 @@
 use std::time::Duration;
-use tunes4r::audio::engine::PlaybackEngine;
+use tunes4r::Player;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -15,43 +15,33 @@ fn main() {
         return;
     }
 
-    println!("Creating playback engine...");
-    let mut engine = PlaybackEngine::new().expect("Failed to create engine");
+    println!("Creating player...");
+    let mut player = Player::new();
 
     let arg = args
         .get(1)
         .cloned()
         .unwrap_or_else(|| "https://mangoradio.stream.laut.fm/mangoradio".to_string());
 
-    let is_file = arg.starts_with('/') || arg.contains('\\') || std::path::Path::new(&arg).exists();
-
-    if is_file {
-        println!("Testing file playback: {}", arg);
-        engine
-            .play_file(&arg)
-            .expect("Failed to start file playback");
-        println!("Listening for 30 seconds... (Ctrl+C to stop)");
-
-        for i in 1..=30 {
-            std::thread::sleep(Duration::from_secs(1));
-            let state = engine.get_state();
-            println!("{}s: state: {:?}", i, state);
-        }
+    let prefixed = if arg.starts_with('/') || std::path::Path::new(&arg).exists() {
+        format!("file://{}", arg)
     } else {
-        println!("Testing stream playback: {}", arg);
-        engine
-            .play_stream(&arg)
-            .expect("Failed to start stream playback");
-        println!("Listening for 30 seconds... (Ctrl+C to stop)");
+        arg.clone()
+    };
 
-        for i in 1..=30 {
-            std::thread::sleep(Duration::from_secs(1));
-            let buffered = engine.get_buffered_position();
-            let state = engine.get_state();
-            println!("{}s: {}ms buffered, state: {:?}", i, buffered, state);
-        }
+    println!("Starting playback: {}", arg);
+    player
+        .start(&prefixed)
+        .expect("Failed to start playback");
+    println!("Listening for 30 seconds... (Ctrl+C to stop)");
+
+    for i in 1..=30 {
+        std::thread::sleep(Duration::from_secs(1));
+        let state = player.state();
+        let pos = player.position_ms();
+        println!("{}s: state: {:?}, pos: {}ms", i, state, pos);
     }
 
-    engine.stop();
+    player.stop();
     println!("Done!");
 }

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tunes4r_player/tunes4r_player.dart';
 
+import 'progress_slider.dart';
+
 String formatMs(int ms) {
   final s = ms ~/ 1000;
   final m = s ~/ 60;
@@ -29,7 +31,6 @@ enum _SourceType { none, file, youtube, live }
 class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   AudioEngine? _engine;
   bool _ready = false;
-  String _status = 'Initializing...';
   String _error = '';
   String _lastSeekEvent = '';
 
@@ -50,6 +51,20 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     totalMs: 0,
     isComplete: false,
   );
+
+  // ── Seek slider state ────────────────────────────────────────────────
+  bool _isDragging = false;
+  DateTime? _lastSeekEnd;
+  int _sliderTargetMs = 0;
+
+  int get _displayPositionMs {
+    if (_isDragging) return _sliderTargetMs;
+    if (_lastSeekEnd != null &&
+        DateTime.now().difference(_lastSeekEnd!).inMilliseconds < 500) {
+      return _sliderTargetMs;
+    }
+    return _positionMs;
+  }
 
   // ── Current source tracking ──────────────────────────────────────────
   String _filePath = '';
@@ -78,9 +93,9 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
         if (!mounted) return;
         setState(() {
           _currentState = state;
-          _status = 'State: ${state.name}';
           if (state == PlaybackState.stopped) {
             _activeSource = _SourceType.none;
+            _error = _engine?.loadError ?? _error;
           }
           if (state == PlaybackState.error) {
             _error = _engine?.loadError ?? '';
@@ -135,20 +150,30 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
 
       setState(() {
         _ready = true;
-        _status = 'Engine ready';
       });
     } catch (e) {
       setState(() {
         _error = e.toString();
-        _status = 'Init failed';
       });
     }
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────
+  // ── Seek actions ────────────────────────────────────────────────────
 
-  void _commitSeek(double v) {
+  void _onSeekChange(double v) {
+    setState(() {
+      _isDragging = true;
+      _sliderTargetMs = v.toInt();
+    });
+  }
+
+  void _onSeekEnd(double v) {
     if (!_canSeek || _durationMs <= 0) return;
+    setState(() {
+      _isDragging = false;
+      _lastSeekEnd = DateTime.now();
+      _sliderTargetMs = v.toInt();
+    });
     _engine?.seek(v.toInt());
   }
 
@@ -182,19 +207,22 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
 
   // ── Buffered seek slider ─────────────────────────────────────────────
 
-  /// Slider that shows buffer progress and allows seeking.
-  /// Only renders the seek bar when [source] is the active source.
-  Widget _bufferedSlider(_SourceType source) {
-    final isActive = source == _activeSource;
+  /// Single ProgressSlider shown only when the matching [source] is active.
+  Widget _sliderForSource(_SourceType source, {SliderMode? mode}) {
+    if (source != _activeSource) return const SizedBox.shrink();
+    final m = mode ??
+        (source == _SourceType.live ? SliderMode.live : SliderMode.file);
     final isLive = source == _SourceType.live;
-    return _BufferedSlider(
-      isActive: isActive,
-      isLive: isLive,
-      positionMs: _positionMs,
+    return ProgressSlider(
+      positionMs: _displayPositionMs,
       durationMs: _durationMs,
-      canSeek: _canSeek,
-      buffer: _buffer,
-      onSeek: _commitSeek,
+      bufferedToMs:
+          isLive ? _buffer.writeOffsetMs : _buffer.endMsClamped,
+      bufferCapacityMs: isLive ? _buffer.capacityMs : _buffer.totalMs,
+      mode: m,
+      enabled: _canSeek && _durationMs > 0,
+      onSeekChange: _onSeekChange,
+      onSeekEnd: _onSeekEnd,
     );
   }
 
@@ -247,7 +275,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
               onStop: () => _engine?.stop(),
             ),
             const SizedBox(height: 8),
-            _bufferedSlider(_SourceType.file),
+            _sliderForSource(_SourceType.file),
           ],
         ),
       ),
@@ -297,7 +325,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
               onStop: () => _engine?.stop(),
             ),
             const SizedBox(height: 8),
-            _bufferedSlider(_SourceType.youtube),
+            _sliderForSource(_SourceType.youtube, mode: SliderMode.streaming),
           ],
         ),
       ),
@@ -349,7 +377,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
               onStop: () => _engine?.stop(),
             ),
             const SizedBox(height: 8),
-            _bufferedSlider(_SourceType.live),
+            _sliderForSource(_SourceType.live),
             const SizedBox(height: 4),
             Text(
               'canSeek: $_canSeek  ·  cache: ${formatMs(_durationMs)}',
@@ -372,14 +400,11 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(_status, style: Theme.of(context).textTheme.titleMedium),
-                if (_currentState == PlaybackState.connecting ||
-                    _currentState == PlaybackState.buffering)
+                if (_activeSource == _SourceType.youtube ||
+                    _activeSource == _SourceType.live)
                   Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: LinearProgressIndicator(
-                      backgroundColor: Colors.grey.shade300,
-                    ),
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _StreamStateBadge(state: _currentState),
                   ),
                 if (_error.isNotEmpty)
                   Padding(
@@ -426,217 +451,99 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   }
 }
 
-// ── BufferedSlider widget ─────────────────────────────────────────────────
-
-/// Seek slider that shows buffer progress and allows dragging/tapping to seek.
-/// Extracted from the inline `_bufferedSlider` method to decouple from
-/// `_activeSource` and remove SRP violation (ARCH-6).
-class _BufferedSlider extends StatefulWidget {
-  final bool isActive;
-  final bool isLive;
-  final int positionMs;
-  final int durationMs;
-  final bool canSeek;
-  final AdaptiveRingBuffer buffer;
-  final void Function(double ms) onSeek;
-
-  const _BufferedSlider({
-    required this.isActive,
-    required this.isLive,
-    required this.positionMs,
-    required this.durationMs,
-    required this.canSeek,
-    required this.buffer,
-    required this.onSeek,
-  });
+class _StreamStateBadge extends StatefulWidget {
+  final PlaybackState state;
+  const _StreamStateBadge({required this.state});
 
   @override
-  State<_BufferedSlider> createState() => _BufferedSliderState();
+  State<_StreamStateBadge> createState() => _StreamStateBadgeState();
 }
 
-class _BufferedSliderState extends State<_BufferedSlider> {
-  bool _isDragging = false;
-  double _dragValue = 0;
+class _StreamStateBadgeState extends State<_StreamStateBadge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+    _pulse = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isPulsing => switch (widget.state) {
+    PlaybackState.connecting ||
+    PlaybackState.buffering ||
+    PlaybackState.decoding => true,
+    _ => false,
+  };
+
+  Color get _color => switch (widget.state) {
+    PlaybackState.stopped => Colors.grey,
+    PlaybackState.connecting => Colors.amber.shade700,
+    PlaybackState.buffering => Colors.blue.shade600,
+    PlaybackState.decoding => Colors.purple,
+    PlaybackState.playing => Colors.green.shade600,
+    PlaybackState.paused => Colors.orange.shade600,
+    PlaybackState.error => Colors.red.shade600,
+  };
+
+  IconData get _icon => switch (widget.state) {
+    PlaybackState.stopped => Icons.stop_circle_outlined,
+    PlaybackState.connecting => Icons.wifi_find,
+    PlaybackState.buffering => Icons.downloading,
+    PlaybackState.decoding => Icons.hourglass_bottom,
+    PlaybackState.playing => Icons.play_circle_fill,
+    PlaybackState.paused => Icons.pause_circle_filled,
+    PlaybackState.error => Icons.error_outline,
+  };
 
   @override
   Widget build(BuildContext context) {
-    final total = widget.isActive && widget.durationMs > 0
-        ? widget.durationMs.toDouble()
-        : 1.0;
-    final maxSeek = widget.isLive
-        ? widget.buffer.writeOffsetMs.toDouble().clamp(0.0, total)
-        : total;
-    final value = widget.isActive
-        ? (_isDragging
-            ? _dragValue.clamp(0.0, maxSeek)
-            : widget.positionMs.toDouble().clamp(0.0, total))
-        : 0.0;
-    final enabled = widget.isActive && widget.canSeek && widget.durationMs > 0;
+    final animating = _isPulsing;
 
-    return SizedBox(
-      height: 48,
-      child: Row(
-        children: [
-          SizedBox(
-            width: 52,
-            child: Text(
-              formatMs(widget.positionMs),
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontFeatures: [FontFeature.tabularFigures()],
-                fontSize: 13,
-              ),
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (_, _) {
+        final opacity = animating ? 0.6 + 0.4 * _pulse.value : 1.0;
+        return Opacity(
+          opacity: opacity,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: widget.state == PlaybackState.error
+                  ? _color.withValues(alpha: 0.15)
+                  : _color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _color.withValues(alpha: 0.4)),
             ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final sliderWidth = constraints.maxWidth;
-                return GestureDetector(
-                  onTapDown: enabled
-                      ? (d) {
-                          final pos = (d.localPosition.dx / sliderWidth * total)
-                              .clamp(0.0, maxSeek);
-                          widget.onSeek(pos);
-                        }
-                      : null,
-                  onHorizontalDragUpdate: enabled
-                      ? (d) {
-                          final raw = d.localPosition.dx / sliderWidth * total;
-                          setState(() => _dragValue = raw.clamp(0.0, maxSeek));
-                          _isDragging = true;
-                        }
-                      : null,
-                  onHorizontalDragEnd: enabled
-                      ? (_) {
-                          widget.onSeek(_dragValue);
-                          setState(() => _isDragging = false);
-                        }
-                      : null,
-                  child: CustomPaint(
-                    size: Size(double.infinity, 32),
-                    painter: _BufferedSliderPainter(
-                      position: value,
-                      total: total,
-                      bufferWrite: widget.buffer.writeOffsetMs.toDouble(),
-                      bufferTotal: widget.buffer.totalMs.toDouble(),
-                      enabled: enabled,
-                    ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_icon, size: 18, color: _color),
+                const SizedBox(width: 8),
+                Text(
+                  widget.state.name,
+                  style: TextStyle(
+                    color: _color,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 52,
-            child: Text(
-              formatMs(widget.durationMs),
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── BufferedSliderPainter ────────────────────────────────────────────────
-
-/// Custom painter that draws a buffered-progress slider bar.
-class _BufferedSliderPainter extends CustomPainter {
-  final double position;
-  final double total;
-  final double bufferWrite;
-  final double bufferTotal;
-  final bool enabled;
-
-  _BufferedSliderPainter({
-    required this.position,
-    required this.total,
-    required this.bufferWrite,
-    required this.bufferTotal,
-    required this.enabled,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final h = size.height;
-    final w = size.width;
-    final trackHeight = 8.0;
-    final trackY = (h - trackHeight) / 2;
-    final fraction = total > 0 ? (position / total).clamp(0.0, 1.0) : 0.0;
-    final posX = fraction * w;
-    final cornerRadius = const Radius.circular(4);
-
-    // 1. Background — unbuffered (dark gray)
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(Rect.fromLTWH(0, trackY, w, trackHeight), cornerRadius),
-      Paint()..color = Colors.grey.shade700,
-    );
-
-    // 2. Buffered region — cyan fill + diagonal hatch stripes
-    if (bufferTotal > 0) {
-      final bufFraction = (bufferWrite / bufferTotal).clamp(0.0, 1.0);
-      final bufW = w * bufFraction;
-      if (bufW > 0) {
-        // Light cyan fill
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(Rect.fromLTWH(0, trackY, bufW, trackHeight), cornerRadius),
-          Paint()..color = Colors.cyan.withValues(alpha: 0.15),
         );
-        // Diagonal hatch stripes
-        canvas.save();
-        canvas.clipRect(Rect.fromLTWH(0, trackY, bufW, trackHeight));
-        final stripePaint = Paint()
-          ..color = Colors.cyan.withValues(alpha: 0.5)
-          ..strokeWidth = 1.5;
-        for (double x = -trackHeight; x < bufW + trackHeight; x += 6) {
-          canvas.drawLine(Offset(x, trackY + trackHeight), Offset(x + 6, trackY), stripePaint);
-        }
-        canvas.restore();
-      }
-    }
-
-    // 3. Played region — solid blue fill (overrides buffer)
-    if (posX > 0) {
-      final playedRect = Rect.fromLTWH(0, trackY, posX, trackHeight);
-      // Rounded only on left side; right edge stays square
-      final playedRRect = RRect.fromRectAndCorners(
-        playedRect,
-        topLeft: const Radius.circular(4),
-        bottomLeft: const Radius.circular(4),
-      );
-      canvas.drawRRect(playedRRect, Paint()..color = Colors.blue);
-    }
-
-    // 4. Thumb handle — diamond
-    if (enabled && w > 0) {
-      final thumbSize = 7.0;
-      final cy = trackY + trackHeight / 2;
-      final path = Path()
-        ..moveTo(posX, cy - thumbSize)            // top
-        ..lineTo(posX + thumbSize * 0.7, cy)      // right
-        ..lineTo(posX, cy + thumbSize)            // bottom
-        ..lineTo(posX - thumbSize * 0.7, cy)      // left
-        ..close();
-      canvas.drawPath(path, Paint()..color = Colors.white);
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = Colors.blue.shade800
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
-      );
-    }
+      },
+    );
   }
-
-  @override
-  bool shouldRepaint(_BufferedSliderPainter old) =>
-      old.position != position ||
-      old.total != total ||
-      old.bufferWrite != bufferWrite ||
-      old.bufferTotal != bufferTotal ||
-      old.enabled != enabled;
 }

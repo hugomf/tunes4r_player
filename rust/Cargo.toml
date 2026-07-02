@@ -1,9 +1,5 @@
 [workspace]
 resolver = "2"
-members = [
-    "crates/core",
-    "crates/youtube",
-]
 
 [package]
 name = "tunes4r"
@@ -19,10 +15,6 @@ name = "play_stream"
 path = "examples/play_stream.rs"
 
 [[example]]
-name = "play_youtube"
-path = "examples/play_youtube.rs"
-
-[[example]]
 name = "yt_service"
 path = "examples/yt_service.rs"
 
@@ -30,22 +22,11 @@ path = "examples/yt_service.rs"
 name = "yt_explode"
 path = "examples/yt_explode.rs"
 
-[[example]]
-name = "play_youtube_with_seek"
-path = "examples/play_youtube_with_seek.rs"
-
-[[example]]
-name = "tui_player"
-path = "examples/tui_player.rs"
-
-[[example]]
-name = "winamptest_ui"
-path = "examples/winamptest_ui.rs"
-
 [features]
-default = ["rustls-platform-verifier"]
+default = ["rustls-platform-verifier", "youtube"]
 rustls-platform-verifier = ["dep:rustls-platform-verifier", "dep:rustls"]
 classifier = []
+youtube = ["tunes4r-player/youtube"]
 
 [profile.release]
 panic = "unwind"
@@ -54,22 +35,14 @@ panic = "unwind"
 cbindgen = "0.29.2"
 
 [dependencies]
-tunes4r-core = { path = "crates/core" }
-tunes4r-youtube = { path = "crates/youtube" }
+tunes4r-player = { path = "../../tunes4r-core/crates/player", features = ["youtube"] }
+ytex = { path = "../../ytex" }
 parking_lot = "0.12"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "2.0"
-cpal = "0.17.3"
-symphonia = { version = "0.6", features = ["mp3", "aac", "flac", "vorbis", "ogg", "mkv", "isomp4"] }
-symphonia-bundle-mp3 = "0.6"
-symphonia-codec-aac = "0.6"
-symphonia-codec-vorbis = "0.6"
-symphonia-bundle-flac = "0.6"
-symphonia-adapter-libopus = { version = "0.3", features = ["bundled"] }
-reqwest = { version = "0.12", features = ["json", "stream", "blocking", "rustls-tls", "rustls-tls-native-roots"], default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tracing-log = "0.2"
@@ -77,7 +50,7 @@ tracing-log = "0.2"
 [target.'cfg(target_os = "android")'.dependencies]
 libc = "0.2"
 ndk-context = "0.1"
-jni = { version = "0.21", default-features = false }
+jni = { version = "0.22", default-features = false }
 android_logger = "0.15"
 
 [target.'cfg(target_os = "android")'.dependencies.log]
@@ -88,7 +61,7 @@ version = "0.1"
 features = ["log"]
 
 [dependencies.rustls-platform-verifier]
-version = "0.6.2"
+version = "0.7"
 optional = true
 
 [dependencies.rustls]
@@ -101,8 +74,8 @@ anyhow = "1.0"
 tokio = { version = "1.0", features = ["test-util", "rt-multi-thread"] }
 ratatui = "0.29"
 crossterm = "0.28"
-eframe = { version = "0.34", features = ["default"] }
+eframe = { version = "0.35.0", features = ["default"] }
 egui = "0.34"
-egui_extras = { version = "0.34", features = ["all_loaders"] }
+egui_extras = { version = "0.35", features = ["all_loaders"] }
 rfd = "0.15"
 log = "0.4"

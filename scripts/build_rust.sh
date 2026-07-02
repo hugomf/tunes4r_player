@@ -60,6 +60,8 @@ build_ios() {
 
   local profile="release"
   [ "$BUILD_TYPE" = "debug" ] && profile="debug"
+  local profile_flag=""
+  [ "$profile" = "release" ] && profile_flag="--release"
 
   cargo rustc --lib --target aarch64-apple-ios --"$profile" --crate-type staticlib
   cargo rustc --lib --target aarch64-apple-ios-sim --"$profile" --crate-type staticlib
@@ -97,14 +99,16 @@ build_macos() {
 
   local profile="release"
   [ "$BUILD_TYPE" = "debug" ] && profile="debug"
+  local profile_flag=""
+  [ "$profile" = "release" ] && profile_flag="--release"
 
   # Ensure both Apple targets are available so the XCFramework is universal
   # (arm64 for Apple Silicon, x86_64 for Intel).
   rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null 2>&1 || true
 
   cd "$RUST_DIR"
-  cargo build --target aarch64-apple-darwin --"$profile"
-  cargo build --target x86_64-apple-darwin  --"$profile"
+  cargo build --target aarch64-apple-darwin $profile_flag
+  cargo build --target x86_64-apple-darwin  $profile_flag
   cd "$PLUGIN_DIR"
 
   local arm_lib="$RUST_DIR/target/aarch64-apple-darwin/$profile/libtunes4r.dylib"
@@ -211,6 +215,15 @@ PLIST
 build_android() {
   echo "=== Building for Android ==="
 
+  local profile="release"
+  [ "$BUILD_TYPE" = "debug" ] && profile="debug"
+  local profile_flag=""
+  [ "$profile" = "release" ] && profile_flag="--release"
+
+  # Prevent cmake on macOS from leaking -arch arm64 into Android cross-compile.
+  # NDK 28's cmake toolchain doesn't clear this automatically.
+  export CMAKE_OSX_ARCHITECTURES=""
+
   # Ensure NDK is configured
   if [ -z "${ANDROID_NDK_HOME:-}" ]; then
     if [ -d "$HOME/Library/Android/sdk/ndk" ]; then
@@ -248,7 +261,7 @@ build_android() {
   for target in aarch64-linux-android armv7-linux-androideabi \
                 x86_64-linux-android i686-linux-android; do
     echo "  Building for $target..."
-    cargo build --target "$target" --release || echo "  [WARN] $target failed"
+    cargo build --target "$target" $profile_flag || echo "  [WARN] $target failed"
   done
   cd "$PLUGIN_DIR"
 
@@ -261,7 +274,7 @@ build_android() {
   for target in "${!ABI_MAP[@]}"; do
     abi="${ABI_MAP[$target]}"
     mkdir -p "android/src/main/jniLibs/$abi"
-    src="$RUST_DIR/target/$target/release/libtunes4r.so"
+    src="$RUST_DIR/target/$target/$profile/libtunes4r.so"
     if [ -f "$src" ]; then
       cp "$src" "android/src/main/jniLibs/$abi/"
       echo "[Android] Copied to android/src/main/jniLibs/$abi/libtunes4r.so"
