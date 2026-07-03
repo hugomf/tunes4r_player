@@ -1,12 +1,18 @@
-/// Playback state enum matching Rust's PlaybackState.
+/// Playback state enum matching Rust's `tunes4r_player::PlaybackState`.
+///
+/// | Value | Meaning         |
+/// |-------|-----------------|
+/// | 0     | Stopped         |
+/// | 1     | Connecting      |
+/// | 2     | Playing         |
+/// | 3     | Paused          |
+/// | 4     | Finished        |
 enum PlaybackState {
   stopped(0),
   connecting(1),
-  buffering(2),
-  decoding(3),
-  playing(4),
-  paused(5),
-  error(6);
+  playing(2),
+  paused(3),
+  finished(4);
 
   final int value;
   const PlaybackState(this.value);
@@ -14,7 +20,7 @@ enum PlaybackState {
   static PlaybackState fromValue(int v) =>
       PlaybackState.values.firstWhere(
         (s) => s.value == v,
-        orElse: () => error,
+        orElse: () => stopped,
       );
 }
 

@@ -1,6 +1,8 @@
 #![cfg(not(target_os = "android"))]
 
 use std::ffi::{CStr, CString};
+use std::time::{Duration, Instant};
+use std::thread;
 
 use tunes4r::ffi::{
     audio_engine_create, audio_engine_destroy, audio_engine_get_load_error,

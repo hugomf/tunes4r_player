@@ -25,14 +25,6 @@ typedef _EngineCanSeekDart = bool Function(Pointer<Void>);
 typedef _EngineCanDownloadNative = Bool Function(Pointer<Void>);
 typedef _EngineCanDownloadDart = bool Function(Pointer<Void>);
 
-typedef _EnginePushAudioBytesNative =
-    Void Function(Pointer<Void>, Pointer<Uint8>, Int32);
-typedef _EnginePushAudioBytesDart =
-    void Function(Pointer<Void>, Pointer<Uint8>, int);
-
-typedef _EngineEndAudioStreamNative = Void Function(Pointer<Void>);
-typedef _EngineEndAudioStreamDart = void Function(Pointer<Void>);
-
 typedef _EnginePauseNative = Void Function(Pointer<Void>);
 typedef _EnginePauseDart = void Function(Pointer<Void>);
 
@@ -172,8 +164,6 @@ class Tunes4rFFI {
   late _EnginePlayDart _play;
   late _EngineCanSeekDart _canSeek;
   late _EngineCanDownloadDart _canDownload;
-  late _EnginePushAudioBytesDart _pushAudioBytes;
-  late _EngineEndAudioStreamDart _endAudioStream;
   late _EnginePauseDart _pause;
   late _EngineResumeDart _resume;
   late _EngineStopDart _stop;
@@ -307,12 +297,6 @@ class Tunes4rFFI {
     _canDownload = l.lookup<NativeFunction<_EngineCanDownloadNative>>(
       'audio_engine_can_download',
     ).asFunction();
-    _pushAudioBytes = l.lookup<NativeFunction<_EnginePushAudioBytesNative>>(
-      'audio_engine_push_audio_bytes',
-    ).asFunction();
-    _endAudioStream = l.lookup<NativeFunction<_EngineEndAudioStreamNative>>(
-      'audio_engine_end_audio_stream',
-    ).asFunction();
     _pause = l.lookup<NativeFunction<_EnginePauseNative>>(
       'audio_engine_pause',
     ).asFunction();
@@ -405,11 +389,6 @@ class Tunes4rFFI {
 
   bool canSeek(Pointer<Void> h) => _canSeek(h);
   bool canDownload(Pointer<Void> h) => _canDownload(h);
-
-  void pushAudioBytes(Pointer<Void> h, Pointer<Uint8> data, int len) =>
-      _pushAudioBytes(h, data, len);
-
-  void endAudioStream(Pointer<Void> h) => _endAudioStream(h);
 
   void pause(Pointer<Void> h) => _pause(h);
   void resume(Pointer<Void> h) => _resume(h);

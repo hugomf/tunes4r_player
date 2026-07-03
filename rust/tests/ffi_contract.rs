@@ -34,24 +34,23 @@ use std::ffi::CString;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use tunes4r::ffi::{
-    audio_engine_can_seek, audio_engine_clear_logs, audio_engine_create,
-    audio_engine_destroy, audio_engine_get_download_buffer, audio_engine_get_logs,
-    audio_engine_get_position, audio_engine_get_state, audio_engine_play, audio_engine_seek,
-    audio_engine_stop, AudioEngineHandle,
+    audio_engine_can_seek, audio_engine_create, audio_engine_destroy,
+    audio_engine_get_download_buffer, audio_engine_get_load_error,
+    audio_engine_get_position, audio_engine_get_state, audio_engine_play,
+    audio_engine_seek, audio_engine_stop, AudioEngineHandle, DownloadBuffer,
+    EngineEvent, PlaybackPosition, playback_state_to_i32,
 };
-use tunes4r::models::{DownloadBuffer, PlaybackPosition, PlaybackState};
+use tunes4r::PlaybackState;
 
 // Helper: compare an FFI-returned i32 state to a PlaybackState variant
-// without relying on `as i32` (the enum is not #[repr(C)]).
 fn state_eq(ffi_value: i32, expected: PlaybackState) -> bool {
-    ffi_value == expected.to_i32()
+    ffi_value == playback_state_to_i32(expected)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -374,43 +373,4 @@ fn can_seek_handles_empty_and_null_engine() {
     // Null handle — should be false, not crash.
     let can_null = audio_engine_can_seek(std::ptr::null());
     assert!(!can_null, "can_seek should be false on null handle");
-}
-
-// ── 4. Log buffer (added in this effort) ───────────────────────────
-
-/// `audio_engine_get_logs` must return a valid UTF-8 string (or empty)
-/// and must not crash on a too-small buffer. Errors emitted via the
-/// `log` crate should appear in the buffer for the UI to display.
-#[test]
-fn log_buffer_captures_emitted_messages() {
-    audio_engine_clear_logs();
-
-    // Create an engine first so init_logger() sets up the tracing subscriber
-    // and the LogTracer bridge (otherwise tracing::error! would be a no-op).
-    let engine = audio_engine_create();
-    assert!(!engine.is_null(), "audio_engine_create returned null");
-
-    // Emit one error so we have something to look for.
-    tracing::error!("[test] canary message for log buffer test");
-
-    // Read into a 4KB buffer. If the buffer is too small, the
-    // function returns -1 and writes nothing — that's still
-    // safe behavior. Otherwise it returns the byte count.
-    let mut buf = [0i8 as c_char; 4096];
-    let n = audio_engine_get_logs(buf.as_mut_ptr(), buf.len());
-    assert!(n >= 0, "log buffer should not return -1 for 4KB output");
-
-    if n > 0 {
-        let bytes: Vec<u8> = buf[..n as usize].iter().map(|&b| b as u8).collect();
-        let s = std::str::from_utf8(&bytes).expect("log buffer must be UTF-8");
-        assert!(
-            s.contains("canary message"),
-            "log buffer should contain the canary, got: {}",
-            s
-        );
-    } else {
-        eprintln!("[note] log buffer is empty; canary may have gone to a different sink");
-    }
-
-    unsafe { audio_engine_destroy(engine); }
 }

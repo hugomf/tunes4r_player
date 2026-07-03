@@ -306,16 +306,6 @@ class AudioEngine {
     return result;
   }
 
-  /// Push raw audio bytes to the Rust engine (pipe mode).
-  void pushAudioBytes(Pointer<Uint8> data, int len) {
-    _ffi.pushAudioBytes(_h, data, len);
-  }
-
-  /// Signal end of pipe stream.
-  void endAudioStream() {
-    _ffi.endAudioStream(_h);
-  }
-
   void pause() {
     _ffi.pause(_h);
   }

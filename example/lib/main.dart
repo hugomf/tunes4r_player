@@ -97,7 +97,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
             _activeSource = _SourceType.none;
             _error = _engine?.loadError ?? _error;
           }
-          if (state == PlaybackState.error) {
+          if (state == PlaybackState.finished) {
             _error = _engine?.loadError ?? '';
           }
         });
@@ -481,30 +481,24 @@ class _StreamStateBadgeState extends State<_StreamStateBadge>
   }
 
   bool get _isPulsing => switch (widget.state) {
-    PlaybackState.connecting ||
-    PlaybackState.buffering ||
-    PlaybackState.decoding => true,
+    PlaybackState.connecting => true,
     _ => false,
   };
 
   Color get _color => switch (widget.state) {
     PlaybackState.stopped => Colors.grey,
     PlaybackState.connecting => Colors.amber.shade700,
-    PlaybackState.buffering => Colors.blue.shade600,
-    PlaybackState.decoding => Colors.purple,
     PlaybackState.playing => Colors.green.shade600,
     PlaybackState.paused => Colors.orange.shade600,
-    PlaybackState.error => Colors.red.shade600,
+    PlaybackState.finished => Colors.blue.shade600,
   };
 
   IconData get _icon => switch (widget.state) {
     PlaybackState.stopped => Icons.stop_circle_outlined,
     PlaybackState.connecting => Icons.wifi_find,
-    PlaybackState.buffering => Icons.downloading,
-    PlaybackState.decoding => Icons.hourglass_bottom,
     PlaybackState.playing => Icons.play_circle_fill,
     PlaybackState.paused => Icons.pause_circle_filled,
-    PlaybackState.error => Icons.error_outline,
+    PlaybackState.finished => Icons.check_circle_outline,
   };
 
   @override
@@ -520,9 +514,7 @@ class _StreamStateBadgeState extends State<_StreamStateBadge>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: widget.state == PlaybackState.error
-                  ? _color.withValues(alpha: 0.15)
-                  : _color.withValues(alpha: 0.12),
+              color: _color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: _color.withValues(alpha: 0.4)),
             ),

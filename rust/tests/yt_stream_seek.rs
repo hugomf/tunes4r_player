@@ -207,7 +207,7 @@ fn stream_seek_within_buffer_emits_started_and_completed() {
         "expected SEEK_STARTED, got: {:?}",
         events
     );
-    assert_eq!(started.unwrap().value, seek_pos as i32);
+    assert_eq!(started.unwrap().int_param, seek_pos as i64);
 
     if reached_playing {
         let completed = events
@@ -218,7 +218,7 @@ fn stream_seek_within_buffer_emits_started_and_completed() {
             "expected SEEK_COMPLETED for stream seek, got: {:?}",
             events
         );
-        assert_eq!(completed.unwrap().value, seek_pos as i32);
+        assert_eq!(completed.unwrap().int_param, seek_pos as i64);
 
         let s_idx = events
             .iter()
@@ -261,7 +261,7 @@ fn stream_seek_to_zero_emits_both_events() {
         "expected SEEK_STARTED for seek(0), got: {:?}",
         events
     );
-    assert_eq!(started.unwrap().value, 0);
+    assert_eq!(started.unwrap().int_param, 0);
 
     if reached_playing {
         let completed = events
@@ -272,7 +272,7 @@ fn stream_seek_to_zero_emits_both_events() {
             "expected SEEK_COMPLETED for seek(0), got: {:?}",
             events
         );
-        assert_eq!(completed.unwrap().value, 0);
+        assert_eq!(completed.unwrap().int_param, 0);
     }
 
     audio_engine_stop(engine.0);
@@ -324,7 +324,7 @@ fn stream_multiple_rapid_seeks_within_buffer() {
             && window[1].event_type == ENGINE_EVENT_SEEK_COMPLETED
         {
             assert_eq!(
-                window[0].value, window[1].value,
+                window[0].int_param, window[1].int_param,
                 "SEEK_COMPLETED position must match its SEEK_STARTED"
             );
         }
@@ -367,7 +367,7 @@ fn stream_seek_then_seek_again_remains_stable() {
         "expected SEEK_STARTED for second seek, got: {:?}",
         events
     );
-    assert_eq!(started.unwrap().value, second_seek as i32);
+    assert_eq!(started.unwrap().int_param, second_seek as i64);
 
     audio_engine_stop(engine.0);
 }
