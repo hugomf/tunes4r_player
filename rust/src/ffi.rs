@@ -8,8 +8,8 @@
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -74,22 +74,6 @@ impl Default for DownloadBuffer {
             is_complete: false,
         }
     }
-}
-
-// ============================================================================
-// Global spectrum state (stub — no FFT analyzer in Player yet)
-// ============================================================================
-
-static SPECTRUM_BAND_COUNT: AtomicI32 = AtomicI32::new(32);
-static GLOBAL_SPECTRUM: RwLock<Vec<f32>> = RwLock::new(Vec::new());
-
-fn set_band_count(count: usize) {
-    SPECTRUM_BAND_COUNT.store(count as i32, Ordering::Relaxed);
-    *GLOBAL_SPECTRUM.write().unwrap() = Vec::with_capacity(count);
-}
-
-fn get_band_count() -> usize {
-    SPECTRUM_BAND_COUNT.load(Ordering::Relaxed) as usize
 }
 
 // ============================================================================
@@ -179,6 +163,14 @@ pub struct AudioEngineHandle {
     event_queue: Arc<Mutex<VecDeque<EngineEvent>>>,
     stop_monitor: Arc<AtomicBool>,
     _monitor_handle: Option<thread::JoinHandle<()>>,
+    // Direct atomic references into Player — read without acquiring the Mutex
+    player_state: Arc<AtomicU8>,
+    player_position_ms: Arc<AtomicU64>,
+    player_output_samples: Arc<AtomicU64>,
+    player_output_sample_rate: Arc<AtomicU32>,
+    player_output_channels: Arc<AtomicU32>,
+    player_total_duration_ms: Arc<AtomicU64>,
+    player_volume_gain: Arc<AtomicU32>,
 }
 
 impl AudioEngineHandle {
@@ -193,11 +185,36 @@ impl AudioEngineHandle {
         let event_queue = Arc::new(Mutex::new(VecDeque::new()));
         let stop_monitor = Arc::new(AtomicBool::new(false));
 
-        // Spawn monitor thread — polls Player state and pushes events
-        let m_player = player.clone();
+        // Clone Player's atomics directly so the monitor thread can read
+        // state without acquiring the Mutex.
+        let player_state;
+        let player_position_ms;
+        let player_output_samples;
+        let player_output_sample_rate;
+        let player_output_channels;
+        let player_total_duration_ms;
+        let player_volume_gain;
+        {
+            let p = player.lock().unwrap();
+            player_state = p.shared_state_arc();
+            player_position_ms = p.shared_position_ms_arc();
+            player_output_samples = p.shared_output_samples_arc();
+            player_output_sample_rate = p.shared_output_sample_rate_arc();
+            player_output_channels = p.shared_output_channels_arc();
+            player_total_duration_ms = p.shared_total_duration_ms_arc();
+            player_volume_gain = p.shared_volume_gain_arc();
+        }
+
+        // Spawn monitor thread — reads Player atomics directly, no lock needed
+        let m_state = player_state.clone();
+        let m_pos = player_position_ms.clone();
+        let m_output_samples = player_output_samples.clone();
+        let m_output_sample_rate = player_output_sample_rate.clone();
+        let m_output_channels = player_output_channels.clone();
+        let m_tdur = player_total_duration_ms.clone();
         let m_shared_state = shared_state.clone();
-        let m_pos = cached_position_ms.clone();
-        let m_dur = cached_total_duration_ms.clone();
+        let m_cache_pos = cached_position_ms.clone();
+        let m_cache_dur = cached_total_duration_ms.clone();
         let m_seek_target = cached_seek_target_ms.clone();
         let m_queue = event_queue.clone();
         let m_stop = stop_monitor.clone();
@@ -210,42 +227,53 @@ impl AudioEngineHandle {
                     return;
                 }
 
-                if let Ok(p) = m_player.try_lock() {
-                    let state_i32 = p.state() as i32;
-                    let pos = p.position_ms();
-                    let dur = p.total_duration_ms();
+                let state_u8 = m_state.load(Ordering::Relaxed);
+                let state_i32 = state_u8 as i32;
+                let decode_pos = m_pos.load(Ordering::Relaxed);
+                let samples = m_output_samples.load(Ordering::Relaxed);
+                let sr = m_output_sample_rate.load(Ordering::Relaxed) as u64;
+                let ch = m_output_channels.load(Ordering::Relaxed) as u64;
+                let output_pos = if sr > 0 && ch > 0 {
+                    samples * 1000 / (sr * ch)
+                } else {
+                    0
+                };
+                let dur = m_tdur.load(Ordering::Relaxed);
 
-                    m_shared_state.store(state_i32, Ordering::Relaxed);
-                    m_pos.store(pos, Ordering::Relaxed);
-                    m_dur.store(dur, Ordering::Relaxed);
+                m_shared_state.store(state_i32, Ordering::Relaxed);
+                m_cache_pos.store(output_pos, Ordering::Relaxed);
+                m_cache_dur.store(dur, Ordering::Relaxed);
 
-                    // Check if seek completed
-                    let target = m_seek_target.load(Ordering::Relaxed);
-                    if target > 0 && pos >= target {
-                        m_seek_target.store(0, Ordering::Relaxed);
-                        let mut q = m_queue.lock().unwrap();
-                        q.push_back(EngineEvent {
-                            event_type: ENGINE_EVENT_SEEK_COMPLETED,
-                            int_param: pos as i64,
-                        });
-                    }
+                // Check if seek completed using decode position (jumps to
+                // seek target immediately on seek) rather than output
+                // position (only advances at audio playout rate).
+                let target = m_seek_target.load(Ordering::Relaxed);
+                if target > 0 && decode_pos >= target {
+                    m_seek_target.store(0, Ordering::Relaxed);
+                    let mut q = m_queue.lock().unwrap();
+                    q.push_back(EngineEvent {
+                        event_type: ENGINE_EVENT_SEEK_COMPLETED,
+                        int_param: output_pos as i64,
+                    });
+                }
 
-                    if p.is_finished() {
-                        let mut q = m_queue.lock().unwrap();
-                        q.push_back(EngineEvent {
-                            event_type: ENGINE_EVENT_END_OF_STREAM,
-                            int_param: 0,
-                        });
-                    }
+                // End-of-stream detection
+                if state_u8 == PlaybackState::Finished as u8 {
+                    let mut q = m_queue.lock().unwrap();
+                    q.push_back(EngineEvent {
+                        event_type: ENGINE_EVENT_END_OF_STREAM,
+                        int_param: 0,
+                    });
+                }
 
-                    if state_i32 != prev_state_i32 {
-                        let mut q = m_queue.lock().unwrap();
-                        q.push_back(EngineEvent {
-                            event_type: ENGINE_EVENT_STATE_CHANGED,
-                            int_param: state_i32 as i64,
-                        });
-                        prev_state_i32 = state_i32;
-                    }
+                // State change detection
+                if state_i32 != prev_state_i32 {
+                    let mut q = m_queue.lock().unwrap();
+                    q.push_back(EngineEvent {
+                        event_type: ENGINE_EVENT_STATE_CHANGED,
+                        int_param: state_i32 as i64,
+                    });
+                    prev_state_i32 = state_i32;
                 }
 
                 thread::sleep(Duration::from_millis(50));
@@ -261,6 +289,13 @@ impl AudioEngineHandle {
             event_queue,
             stop_monitor,
             _monitor_handle: Some(handle),
+            player_state,
+            player_position_ms,
+            player_output_samples,
+            player_output_sample_rate,
+            player_output_channels,
+            player_total_duration_ms,
+            player_volume_gain,
         }
     }
 }
@@ -280,19 +315,6 @@ pub unsafe extern "C" fn audio_engine_destroy(handle: *mut AudioEngineHandle) {
         (*handle).stop_monitor.store(true, Ordering::Relaxed);
         drop(Box::from_raw(handle));
     }
-}
-
-#[no_mangle]
-pub extern "C" fn audio_engine_set_spectrum_band_count(
-    _handle: *mut AudioEngineHandle,
-    count: i32,
-) {
-    set_band_count(count as usize);
-}
-
-#[no_mangle]
-pub extern "C" fn audio_engine_set_spectrum_band_count_global(count: i32) {
-    set_band_count(count as usize);
 }
 
 // ============================================================================
@@ -347,11 +369,7 @@ pub extern "C" fn audio_engine_can_seek(handle: *const AudioEngineHandle) -> boo
         Some(h) => h,
         None => return false,
     };
-    if let Ok(p) = h.player.try_lock() {
-        p.total_duration_ms() > 0
-    } else {
-        false
-    }
+    h.player_total_duration_ms.load(Ordering::Relaxed) > 0
 }
 
 #[no_mangle]
@@ -418,6 +436,7 @@ pub extern "C" fn audio_engine_seek(handle: *mut AudioEngineHandle, position_ms:
                 int_param: position_ms as i64,
             });
         }
+        p.reset_output_position(position_ms);
         p.seek(position_ms);
         info!(
             "[ffi] seek to {}ms took {:?}",
@@ -454,12 +473,7 @@ pub extern "C" fn audio_engine_get_volume(handle: *const AudioEngineHandle) -> f
         Some(h) => h,
         None => return 1.0,
     };
-    if let Ok(p) = h.player.try_lock() {
-        p.volume_gain()
-    } else {
-        // Return cached value from when we last read it
-        1.0
-    }
+    f32::from_bits(h.player_volume_gain.load(Ordering::Relaxed))
 }
 
 // ============================================================================
@@ -572,35 +586,6 @@ pub extern "C" fn audio_engine_is_playing(handle: *const AudioEngineHandle) -> b
 }
 
 // ============================================================================
-// Spectrum analysis (stub — always returns empty)
-// ============================================================================
-
-#[no_mangle]
-pub unsafe extern "C" fn audio_engine_get_spectrum(
-    _handle: *mut AudioEngineHandle,
-    out: *mut f32,
-    max_bands: usize,
-) -> bool {
-    if out.is_null() || max_bands == 0 {
-        return false;
-    }
-    let spectrum = GLOBAL_SPECTRUM.read().unwrap();
-    let n = spectrum.len().min(max_bands).min(32);
-    if n == 0 {
-        return false;
-    }
-    std::ptr::copy_nonoverlapping(spectrum.as_ptr(), out, n);
-    true
-}
-
-#[no_mangle]
-pub extern "C" fn audio_engine_get_spectrum_band_count_for_engine(
-    _handle: *mut AudioEngineHandle,
-) -> i32 {
-    get_band_count() as i32
-}
-
-// ============================================================================
 // Utility functions
 // ============================================================================
 
@@ -631,8 +616,11 @@ pub extern "C" fn audio_engine_get_buffered_position(
         Some(h) => h,
         None => return 0,
     };
-    if let Ok(p) = h.player.try_lock() {
-        p.output_position_ms()
+    let samples = h.player_output_samples.load(Ordering::Relaxed);
+    let sr = h.player_output_sample_rate.load(Ordering::Relaxed) as u64;
+    let ch = h.player_output_channels.load(Ordering::Relaxed) as u64;
+    if sr > 0 && ch > 0 {
+        samples * 1000 / (sr * ch)
     } else {
         0
     }
@@ -676,81 +664,6 @@ pub extern "C" fn youtube_get_stream_url(video_id: *const c_char) -> *mut c_char
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn audio_engine_play_youtube(
-    handle: *mut AudioEngineHandle,
-    url: *const c_char,
-) -> i32 {
-    if handle.is_null() || url.is_null() {
-        return -1;
-    }
-    let url_str = match CStr::from_ptr(url).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
-
-    let h = &*handle;
-    h.shared_state
-        .store(PlaybackState::Connecting as i32, Ordering::Relaxed);
-
-    let player = h.player.clone();
-    let url_owned = url_str.to_string();
-
-    thread::spawn(move || {
-        let mut p = match player.lock() {
-            Ok(p) => p,
-            Err(e) => {
-                error!("[ffi] play_youtube: lock error: {}", e);
-                return;
-            }
-        };
-        if let Err(e) = p.start(&url_owned) {
-            error!("[ffi] play_youtube: start error: {}", e);
-            p.set_load_error(format!("{e}"));
-        }
-    });
-
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn audio_engine_play_live(
-    handle: *mut AudioEngineHandle,
-    url: *const c_char,
-    _cache_max_ms: u64,
-) -> i32 {
-    if handle.is_null() || url.is_null() {
-        return -1;
-    }
-    let url_str = match CStr::from_ptr(url).to_str() {
-        Ok(s) => s,
-        Err(_) => return -2,
-    };
-
-    let h = &*handle;
-    h.shared_state
-        .store(PlaybackState::Connecting as i32, Ordering::Relaxed);
-
-    let player = h.player.clone();
-    let url_owned = url_str.to_string();
-
-    thread::spawn(move || {
-        let mut p = match player.lock() {
-            Ok(p) => p,
-            Err(e) => {
-                error!("[ffi] play_live: lock error: {}", e);
-                return;
-            }
-        };
-        if let Err(e) = p.start(&url_owned) {
-            error!("[ffi] play_live: start error: {}", e);
-            p.set_load_error(format!("{e}"));
-        }
-    });
-
-    0
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -784,17 +697,6 @@ mod tests {
         let buf = audio_engine_get_download_buffer(std::ptr::null());
         assert_eq!(buf.total_ms, 0);
         assert!(audio_engine_get_load_error(std::ptr::null()).is_null());
-    }
-
-    #[test]
-    fn test_spectrum_null_safety() {
-        unsafe {
-            assert!(!audio_engine_get_spectrum(
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-            ));
-        }
     }
 
     #[test]

@@ -49,19 +49,6 @@ typedef _EngineIsPlayingDart = bool Function(Pointer<Void>);
 typedef _EngineGetStateNative = Int32 Function(Pointer<Void>);
 typedef _EngineGetStateDart = int Function(Pointer<Void>);
 
-typedef _EngineGetSpectrumBandCountForEngineNative =
-    Int32 Function(Pointer<Void>);
-typedef _EngineGetSpectrumBandCountForEngineDart =
-    int Function(Pointer<Void>);
-
-typedef _EngineSetSpectrumBandCountNative =
-    Void Function(Pointer<Void>, Int32);
-typedef _EngineSetSpectrumBandCountDart =
-    void Function(Pointer<Void>, int);
-
-typedef _EngineSetSpectrumBandCountGlobalNative = Void Function(Int32);
-typedef _EngineSetSpectrumBandCountGlobalDart = void Function(int);
-
 final class PlaybackPosition extends Struct {
   @Uint64()
   external int currentMs;
@@ -115,11 +102,6 @@ typedef _EngineGetDownloadBufferNative =
 typedef _EngineGetDownloadBufferDart =
     AdaptiveRingBufferStruct Function(Pointer<Void>);
 
-typedef _EngineGetSpectrumNative =
-    Bool Function(Pointer<Void>, Pointer<Float>, Uint64);
-typedef _EngineGetSpectrumDart =
-    bool Function(Pointer<Void>, Pointer<Float>, int);
-
 typedef _EngineGetBufferedPositionNative = Uint64 Function(Pointer<Void>);
 typedef _EngineGetBufferedPositionDart = int Function(Pointer<Void>);
 
@@ -136,16 +118,6 @@ typedef _YoutubeGetStreamUrlNative =
     Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _YoutubeGetStreamUrlDart =
     Pointer<Utf8> Function(Pointer<Utf8>);
-
-typedef _EnginePlayYoutubeNative =
-    Int32 Function(Pointer<Void>, Pointer<Utf8>);
-typedef _EnginePlayYoutubeDart =
-    int Function(Pointer<Void>, Pointer<Utf8>);
-
-typedef _EnginePlayLiveNative =
-    Int32 Function(Pointer<Void>, Pointer<Utf8>, Uint64);
-typedef _EnginePlayLiveDart =
-    int Function(Pointer<Void>, Pointer<Utf8>, int);
 
 // ---------------------------------------------------------------------------
 // Low-level FFI wrapper
@@ -175,18 +147,11 @@ class Tunes4rFFI {
   late _EngineGetPositionDart _getPosition;
   late _EnginePollEventDart _pollEvent;
   late _EngineGetDownloadBufferDart _getDownloadBuffer;
-  late _EngineGetSpectrumDart _getSpectrum;
-  late _EngineGetSpectrumBandCountForEngineDart
-      _getSpectrumBandCountForEngine;
-  late _EngineSetSpectrumBandCountDart _setSpectrumBandCount;
-  late _EngineSetSpectrumBandCountGlobalDart _setSpectrumBandCountGlobal;
   late _EngineGetBufferedPositionDart _getBufferedPosition;
   late _EngineGetSampleRateDart _getSampleRate;
   late _EngineGetChannelsDart _getChannels;
   late _EngineGetLoadErrorDart _getLoadError;
   late _YoutubeGetStreamUrlDart _youtubeGetStreamUrl;
-  late _EnginePlayYoutubeDart _playYoutube;
-  late _EnginePlayLiveDart _playLive;
 
   String? get initError => _initError;
   bool get isInitialized => _isInitialized;
@@ -331,21 +296,6 @@ class Tunes4rFFI {
         l.lookup<NativeFunction<_EngineGetDownloadBufferNative>>(
           'audio_engine_get_download_buffer',
         ).asFunction();
-    _getSpectrum = l.lookup<NativeFunction<_EngineGetSpectrumNative>>(
-      'audio_engine_get_spectrum',
-    ).asFunction();
-    _getSpectrumBandCountForEngine =
-        l.lookup<NativeFunction<_EngineGetSpectrumBandCountForEngineNative>>(
-          'audio_engine_get_spectrum_band_count_for_engine',
-        ).asFunction();
-    _setSpectrumBandCount =
-        l.lookup<NativeFunction<_EngineSetSpectrumBandCountNative>>(
-          'audio_engine_set_spectrum_band_count',
-        ).asFunction();
-    _setSpectrumBandCountGlobal =
-        l.lookup<NativeFunction<_EngineSetSpectrumBandCountGlobalNative>>(
-          'audio_engine_set_spectrum_band_count_global',
-        ).asFunction();
     _getBufferedPosition =
         l.lookup<NativeFunction<_EngineGetBufferedPositionNative>>(
           'audio_engine_get_buffered_position',
@@ -363,12 +313,6 @@ class Tunes4rFFI {
         l.lookup<NativeFunction<_YoutubeGetStreamUrlNative>>(
           'youtube_get_stream_url',
         ).asFunction();
-    _playYoutube = l.lookup<NativeFunction<_EnginePlayYoutubeNative>>(
-      'audio_engine_play_youtube',
-    ).asFunction();
-    _playLive = l.lookup<NativeFunction<_EnginePlayLiveNative>>(
-      'audio_engine_play_live',
-    ).asFunction();
   }
 
   // ---------------------------------------------------------------------------
@@ -403,23 +347,6 @@ class Tunes4rFFI {
   AdaptiveRingBufferStruct getDownloadBuffer(Pointer<Void> h) =>
       _getDownloadBuffer(h);
 
-  List<double> getSpectrum(Pointer<Void> h) {
-    final count = _getSpectrumBandCountForEngine(h);
-    if (count <= 0) return [];
-    final buf = calloc<Float>(count);
-    try {
-      if (_getSpectrum(h, buf, count)) {
-        return List.generate(count, (i) => buf[i]);
-      }
-      return [];
-    } finally {
-      calloc.free(buf);
-    }
-  }
-
-  void setSpectrumBandCount(Pointer<Void> h, int c) =>
-      _setSpectrumBandCount(h, c);
-  void setSpectrumBandCountGlobal(int c) => _setSpectrumBandCountGlobal(c);
   int getBufferedPosition(Pointer<Void> h) => _getBufferedPosition(h);
   int getSampleRate(Pointer<Void> h) => _getSampleRate(h);
   int getChannels(Pointer<Void> h) => _getChannels(h);
@@ -440,24 +367,6 @@ class Tunes4rFFI {
       final s = resultPtr.toDartString();
       calloc.free(resultPtr);
       return s.isEmpty ? null : s;
-    } finally {
-      calloc.free(ptr);
-    }
-  }
-
-  int playYoutube(Pointer<Void> h, String url) {
-    final urlPtr = url.toNativeUtf8();
-    try {
-      return _playYoutube(h, urlPtr);
-    } finally {
-      calloc.free(urlPtr);
-    }
-  }
-
-  int playLive(Pointer<Void> h, String url, int cacheMaxMs) {
-    final ptr = url.toNativeUtf8();
-    try {
-      return _playLive(h, ptr, cacheMaxMs);
     } finally {
       calloc.free(ptr);
     }

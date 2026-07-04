@@ -201,7 +201,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     if (_engine == null) return;
     final url = _liveController.text.trim();
     if (url.isEmpty) return;
-    _engine!.playLive(url, cacheMaxMs: 30 * 60 * 1000);
+    _engine!.play(url);
     setState(() => _activeSource = _SourceType.live);
   }
 

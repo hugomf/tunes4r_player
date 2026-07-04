@@ -26,11 +26,7 @@ enum PlaybackState {
 
 /// Configuration for creating an [AudioEngine].
 class EngineConfig {
-  final int spectrumBandCount;
-
-  const EngineConfig({
-    this.spectrumBandCount = 16,
-  });
+  const EngineConfig();
 }
 
 class Tunes4rInitException implements Exception {

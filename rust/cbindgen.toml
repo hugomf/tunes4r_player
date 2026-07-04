@@ -43,9 +43,6 @@ include = [
     "audio_engine_get_state",
     "audio_engine_get_position",
     "audio_engine_is_playing",
-    "audio_engine_analyze_spectrum",
-    "audio_engine_get_spectrum",
-    "spectrum_data_free",
     "audio_engine_get_error",
     "rust_string_free",
 ]

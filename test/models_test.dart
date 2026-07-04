@@ -31,22 +31,6 @@ void main() {
   });
 
   // ===========================================================================
-  // EngineConfig
-  // ===========================================================================
-
-  group('EngineConfig', () {
-    test('has default spectrumBandCount of 16', () {
-      const config = EngineConfig();
-      expect(config.spectrumBandCount, 16);
-    });
-
-    test('accepts custom spectrumBandCount', () {
-      const config = EngineConfig(spectrumBandCount: 32);
-      expect(config.spectrumBandCount, 32);
-    });
-  });
-
-  // ===========================================================================
   // AdaptiveRingBuffer
   // ===========================================================================
 

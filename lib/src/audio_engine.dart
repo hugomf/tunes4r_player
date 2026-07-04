@@ -10,9 +10,6 @@ import 'tunes4r_player_ffi.dart';
 // Named polling interval constants
 // ---------------------------------------------------------------------------
 
-/// Interval (ms) between spectrum data polls (10 Hz).
-const _spectrumPollIntervalMs = 100;
-
 /// Interval (ms) between position polls, vsync-aligned (~60 Hz).
 const _positionPollIntervalMs = 16;
 
@@ -34,15 +31,12 @@ class _EnginePoller {
   Pointer<Void>? _handle;
   bool _active = false;
 
-  Timer? _spectrumPoller;
   Timer? _positionPoller;
   Timer? _eventPoller;
   Timer? _bufferPoller;
 
   final StreamController<PlaybackState> stateCtrl =
       StreamController<PlaybackState>.broadcast();
-  final StreamController<List<double>> spectrumCtrl =
-      StreamController<List<double>>.broadcast();
   final StreamController<PlaybackPosition> positionCtrl =
       StreamController<PlaybackPosition>.broadcast();
   final StreamController<EngineEvent> eventCtrl =
@@ -62,19 +56,6 @@ class _EnginePoller {
     if (_active) return;
     _active = true;
     _handle = handle;
-
-    _spectrumPoller ??= Timer.periodic(
-      const Duration(milliseconds: _spectrumPollIntervalMs),
-      (_) {
-        if (!_active || _handle == null) return;
-        try {
-          final s = _ffi.getSpectrum(_handle!);
-          if (s.isNotEmpty) spectrumCtrl.add(s);
-        } catch (e) {
-          debugPrint('[tunes4r] spectrum poll error: $e');
-        }
-      },
-    );
 
     _positionPoller ??= Timer.periodic(
       const Duration(milliseconds: _positionPollIntervalMs),
@@ -138,8 +119,6 @@ class _EnginePoller {
   void stop() {
     _active = false;
     _handle = null;
-    _spectrumPoller?.cancel();
-    _spectrumPoller = null;
     _positionPoller?.cancel();
     _positionPoller = null;
     _eventPoller?.cancel();
@@ -152,7 +131,6 @@ class _EnginePoller {
   void dispose() {
     stop();
     stateCtrl.close();
-    spectrumCtrl.close();
     positionCtrl.close();
     eventCtrl.close();
     bufferCtrl.close();
@@ -186,9 +164,6 @@ class AudioEngine {
 
   /// Stream of playback state changes (driven by native events).
   Stream<PlaybackState> get stateStream => _poller.stateCtrl.stream;
-
-  /// Stream of FFT spectrum data (polled every 100ms).
-  Stream<List<double>> get spectrumStream => _poller.spectrumCtrl.stream;
 
   /// Stream of playback position updates.
   ///
@@ -243,9 +218,6 @@ class AudioEngine {
         'Native initialization failed: ${engineFfi.initError}',
       );
     }
-    if (config.spectrumBandCount > 0) {
-      engineFfi.setSpectrumBandCountGlobal(config.spectrumBandCount);
-    }
     return create(ffi: engineFfi);
   }
 
@@ -253,7 +225,7 @@ class AudioEngine {
   // Polling
   // ---------------------------------------------------------------------------
 
-  /// Start polling for state, spectrum, position, and event updates.
+  /// Start polling for state, position, and event updates.
   /// Called automatically by [play], [resume], etc.
   void startPolling() => _poller.start(_h);
 
@@ -277,31 +249,12 @@ class AudioEngine {
     return result;
   }
 
-  /// Play a YouTube URL or video ID.
-  int playYoutube(String url) {
-    startPolling();
-    final result = _ffi.playYoutube(_h, url);
-    _poller.positionCtrl.add(_ffi.getPosition(_h));
-    return result;
-  }
-
   /// Play an HTTP stream. Deprecated — use [play] instead; it
   /// auto-detects the source type.
   @Deprecated('Use play() instead — it auto-detects the source type.')
   int playStream(String url) {
     startPolling();
     final result = _ffi.play(_h, url);
-    _poller.positionCtrl.add(_ffi.getPosition(_h));
-    return result;
-  }
-
-  /// Play a live internet stream with backward-seek support.
-  ///
-  /// [cacheMaxMs] controls how many ms of audio are kept in the ring
-  /// buffer for seeking backward (default 30 min).
-  int playLive(String url, {int cacheMaxMs = 30 * 60 * 1000}) {
-    startPolling();
-    final result = _ffi.playLive(_h, url, cacheMaxMs);
     _poller.positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
@@ -365,8 +318,6 @@ class AudioEngine {
   int get sampleRate => _ffi.getSampleRate(_h);
 
   int get channels => _ffi.getChannels(_h);
-
-  List<double> getSpectrum() => _ffi.getSpectrum(_h);
 
   String? get loadError => _ffi.getLoadError(_h);
 
