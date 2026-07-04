@@ -103,15 +103,18 @@ pub extern "C" fn JNI_OnLoad(vm: *mut std::ffi::c_void, _reserved: *mut std::ffi
 }
 
 fn init_logger() {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        tracing_log::LogTracer::init().ok();
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_writer(std::io::stderr)
-            .with_target(true)
-            .try_init();
-    });
+    #[cfg(not(target_os = "android"))]
+    {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            tracing_log::LogTracer::init().ok();
+            let _ = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(std::io::stderr)
+                .with_target(true)
+                .try_init();
+        });
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -124,13 +127,13 @@ pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPl
     use tracing::warn;
     let mut env_unowned = jni::EnvUnowned::from_raw(env);
     let _ = env_unowned.with_env_no_catch(|env| -> Result<(), jni::errors::Error> {
-        let context = jni::objects::JObject::from_raw(context);
+        let context = jni::objects::JObject::from_raw(env, context);
         if let Err(e) = rustls_platform_verifier::android::init_with_env(env, context) {
             warn!("[ffi] nativeInit: rustls-platform-verifier init failed: {:?}", e);
         }
 
         let java_vm = env.get_java_vm()?;
-        let vm_ptr = java_vm.get_java_vm_pointer();
+        let vm_ptr = java_vm.get_raw();
         if !vm_ptr.is_null() {
             ndk_context::initialize_android_context(
                 vm_ptr as *mut std::ffi::c_void,
