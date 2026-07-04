@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -164,8 +164,6 @@ pub struct AudioEngineHandle {
     stop_monitor: Arc<AtomicBool>,
     _monitor_handle: Option<thread::JoinHandle<()>>,
     // Direct atomic references into Player — read without acquiring the Mutex
-    player_state: Arc<AtomicU8>,
-    player_position_ms: Arc<AtomicU64>,
     player_output_samples: Arc<AtomicU64>,
     player_output_sample_rate: Arc<AtomicU32>,
     player_output_channels: Arc<AtomicU32>,
@@ -187,8 +185,6 @@ impl AudioEngineHandle {
 
         // Clone Player's atomics directly so the monitor thread can read
         // state without acquiring the Mutex.
-        let player_state;
-        let player_position_ms;
         let player_output_samples;
         let player_output_sample_rate;
         let player_output_channels;
@@ -196,8 +192,6 @@ impl AudioEngineHandle {
         let player_volume_gain;
         {
             let p = player.lock().unwrap();
-            player_state = p.shared_state_arc();
-            player_position_ms = p.shared_position_ms_arc();
             player_output_samples = p.shared_output_samples_arc();
             player_output_sample_rate = p.shared_output_sample_rate_arc();
             player_output_channels = p.shared_output_channels_arc();
@@ -206,8 +200,14 @@ impl AudioEngineHandle {
         }
 
         // Spawn monitor thread — reads Player atomics directly, no lock needed
-        let m_state = player_state.clone();
-        let m_pos = player_position_ms.clone();
+        // Grab our own Arcs inside the lock so the monitor is self-sufficient.
+        let m_state;
+        let m_pos;
+        {
+            let p = player.lock().unwrap();
+            m_state = p.shared_state_arc();
+            m_pos = p.shared_position_ms_arc();
+        }
         let m_output_samples = player_output_samples.clone();
         let m_output_sample_rate = player_output_sample_rate.clone();
         let m_output_channels = player_output_channels.clone();
@@ -289,8 +289,6 @@ impl AudioEngineHandle {
             event_queue,
             stop_monitor,
             _monitor_handle: Some(handle),
-            player_state,
-            player_position_ms,
             player_output_samples,
             player_output_sample_rate,
             player_output_channels,

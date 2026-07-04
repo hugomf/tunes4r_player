@@ -11,21 +11,19 @@ void main() {
       test('returns correct enum for each known value', () {
         expect(PlaybackState.fromValue(0), PlaybackState.stopped);
         expect(PlaybackState.fromValue(1), PlaybackState.connecting);
-        expect(PlaybackState.fromValue(2), PlaybackState.buffering);
-        expect(PlaybackState.fromValue(3), PlaybackState.decoding);
-        expect(PlaybackState.fromValue(4), PlaybackState.playing);
-        expect(PlaybackState.fromValue(5), PlaybackState.paused);
-        expect(PlaybackState.fromValue(6), PlaybackState.error);
+        expect(PlaybackState.fromValue(2), PlaybackState.playing);
+        expect(PlaybackState.fromValue(3), PlaybackState.paused);
+        expect(PlaybackState.fromValue(4), PlaybackState.finished);
       });
 
-      test('returns error for unknown value', () {
-        expect(PlaybackState.fromValue(-1), PlaybackState.error);
-        expect(PlaybackState.fromValue(99), PlaybackState.error);
+      test('returns stopped for unknown value', () {
+        expect(PlaybackState.fromValue(-1), PlaybackState.stopped);
+        expect(PlaybackState.fromValue(99), PlaybackState.stopped);
       });
 
-      test('returns error for null-equivalent edge cases', () {
-        expect(PlaybackState.fromValue(7), PlaybackState.error);
-        expect(PlaybackState.fromValue(-100), PlaybackState.error);
+      test('returns stopped for out-of-range edge cases', () {
+        expect(PlaybackState.fromValue(7), PlaybackState.stopped);
+        expect(PlaybackState.fromValue(-100), PlaybackState.stopped);
       });
     });
   });
