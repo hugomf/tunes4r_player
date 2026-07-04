@@ -131,20 +131,29 @@ pub unsafe extern "system" fn Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPl
         if let Err(e) = rustls_platform_verifier::android::init_with_env(env, context) {
             warn!("[ffi] nativeInit: rustls-platform-verifier init failed: {:?}", e);
         }
+        if env.exception_check() {
+            env.exception_clear();
+        }
+        Ok(())
+    });
+}
 
-        let java_vm = env.get_java_vm()?;
-        let vm_ptr = java_vm.get_raw();
-        if !vm_ptr.is_null() {
-            ndk_context::initialize_android_context(
-                vm_ptr as *mut std::ffi::c_void,
-                std::ptr::null_mut(),
-            );
-            android_logger::init_once(
-                android_logger::Config::default()
-                    .with_max_level(log::LevelFilter::Debug)
-                    .with_tag("tunes4r"),
-            );
-            info!("[ffi] ndk_context initialized via nativeInit");
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_ocelot_tunes4r_MainActivity_initRustlsPlatformVerifier(
+    env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    context: jni::sys::jobject,
+) {
+    use tracing::warn;
+    let mut env_unowned = jni::EnvUnowned::from_raw(env);
+    let _ = env_unowned.with_env_no_catch(|env| -> Result<(), jni::errors::Error> {
+        let context = jni::objects::JObject::from_raw(env, context);
+        if let Err(e) = rustls_platform_verifier::android::init_with_env(env, context) {
+            warn!("[ffi] initRustlsPlatformVerifier failed: {:?}", e);
+        }
+        if env.exception_check() {
+            env.exception_clear();
         }
         Ok(())
     });
