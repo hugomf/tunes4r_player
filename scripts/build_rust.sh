@@ -23,15 +23,11 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
-RUST_DIR="$PLUGIN_DIR/rust"
+RUST_DIR="$(dirname "$PLUGIN_DIR")/tunes4r-core/crates/ffi"
 
-# If rust/ doesn't exist in the plugin, try the parent project
 if [ ! -d "$RUST_DIR" ]; then
-  RUST_DIR="$(dirname "$PLUGIN_DIR")/rust"
-fi
-if [ ! -d "$RUST_DIR" ]; then
-  echo "ERROR: rust/ directory not found. Copy or symlink it into $PLUGIN_DIR/rust/"
-  echo "  ln -s ../../rust $PLUGIN_DIR/rust"
+  echo "ERROR: $RUST_DIR not found."
+  echo "Expected tunes4r-core at: $(dirname "$PLUGIN_DIR")/tunes4r-core"
   exit 1
 fi
 
@@ -162,7 +158,16 @@ build_macos() {
   cp "$arm_lib" "$out_dir/libtunes4r.dylib"
   install_name_tool -id "@rpath/libtunes4r.dylib" "$out_dir/libtunes4r.dylib"
 
+  # 3) Copy into the SPM package directory so `flutter run` picks it up
+  local spm_dir="$out_dir/../tunes4r_player/Frameworks"
+  mkdir -p "$spm_dir"
+  rm -rf "$spm_dir/libtunes4r.xcframework"
+  cp -R "$out_dir/libtunes4r.xcframework" "$spm_dir/"
+  cp "$arm_lib" "$spm_dir/libtunes4r.dylib"
+  install_name_tool -id "@rpath/libtunes4r.dylib" "$spm_dir/libtunes4r.dylib"
+
   echo "[macOS] XCFramework at $out_dir/libtunes4r.xcframework (arm64 + x86_64)"
+  echo "[macOS] SPM copy at $spm_dir/libtunes4r.xcframework"
   echo "[macOS] Flat dylib at $out_dir/libtunes4r.dylib"
 }
 

@@ -28,15 +28,4 @@ Pod::Spec.new do |s|
 
   # Frameworks required by the Rust engine
   s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreAudio', 'Security', 'CoreFoundation'
-
-  # Ensure every slice of the XCFramework is properly signed during
-  # CocoaPods' code-signing phase. CocoaPods doesn't recursively sign
-  # vendored frameworks, so we handle it ourselves.
-  s.script_phases = [
-    {
-      :name => 'Sign libtunes4r.xcframework',
-      :script => 'find "${PODS_TARGET_SRCROOT}/macos/Frameworks/libtunes4r.xcframework" -name "libtunes4r" -type f -exec codesign --force --sign - {} \\; 2>/dev/null || true',
-      :execution_position => :after_compile,
-    }
-  ]
 end

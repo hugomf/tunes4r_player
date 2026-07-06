@@ -31,6 +31,19 @@ String? _findDylib() {
   return null;
 }
 
+// Native event callback state — populated by trampoline, read by test.
+int _ytTestSeekEventCount = 0;
+List<int> _ytTestSeekEventTypes = [];
+void _ytTestOnEvent(int type, int _) {
+  // 2 = seekStarted, 3 = seekCompleted
+  if (type == 2 || type == 3) {
+    _ytTestSeekEventCount++;
+    _ytTestSeekEventTypes.add(type);
+  }
+}
+final _ytTestCallback =
+    NativeCallable<Void Function(Int32, Int64)>.isolateLocal(_ytTestOnEvent);
+
 void main() {
   if (!_enabled) {
     test('YouTube stream seek (skipped — set --dart-define=YT_TEST=1 to run)',
@@ -80,6 +93,11 @@ void main() {
 
       debugPrint('[yt-test] Buffer ready (${buf.writeOffsetMs}ms). Starting seeks...');
 
+      // Register native callback to track seek events
+      _ytTestSeekEventCount = 0;
+      _ytTestSeekEventTypes = [];
+      ffi.setEventCallback(handle, _ytTestCallback.nativeFunction);
+
       // Perform seeks within the buffered range: 5s, 10s, 20s, 8s, 15s
       // Each seek plays for 5 seconds before next seek
       final targets = [5000, 10000, 20000, 8000, 15000];
@@ -113,18 +131,15 @@ void main() {
         await Future.delayed(const Duration(seconds: 5));
       }
 
-      // Verify events
-      var seekEvents = <int>[];
-      for (var i = 0; i < 50; i++) {
-        final event = ffi.pollEvent(handle);
-        if (event.eventType == 0) break;
-        if (event.eventType == 2 || event.eventType == 3) {
-          seekEvents.add(event.eventType);
-        }
-      }
-      expect(seekEvents.where((t) => t == 2).length, greaterThanOrEqualTo(5),
+      // Give callback time to capture all events
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Verify events via callback
+      expect(_ytTestSeekEventTypes.where((t) => t == 2).length,
+          greaterThanOrEqualTo(5),
           reason: 'should have at least 5 SEEK_STARTED events');
-      expect(seekEvents.where((t) => t == 3).length, greaterThanOrEqualTo(5),
+      expect(_ytTestSeekEventTypes.where((t) => t == 3).length,
+          greaterThanOrEqualTo(5),
           reason: 'should have at least 5 SEEK_COMPLETED events');
     }, timeout: const Timeout(Duration(seconds: 180)));
   });

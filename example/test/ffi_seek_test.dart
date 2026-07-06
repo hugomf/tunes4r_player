@@ -1,8 +1,20 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunes4r_player/tunes4r_player.dart';
+
+// Native event callback state — set by trampoline, read by test.
+bool _ffiTestSawSeekStarted = false;
+bool _ffiTestSawSeekCompleted = false;
+void _ffiTestOnEvent(int type, int _) {
+  // 2 = seekStarted, 3 = seekCompleted
+  if (type == 2) _ffiTestSawSeekStarted = true;
+  if (type == 3) _ffiTestSawSeekCompleted = true;
+}
+final _ffiTestCallback =
+    NativeCallable<Void Function(Int32, Int64)>.isolateLocal(_ffiTestOnEvent);
 
 /// Find the native library from common build locations.
 String? _findDylib() {
@@ -58,6 +70,11 @@ void main() {
       expect(handle, isNotNull);
       addTearDown(() => ffi.destroyEngine(handle));
 
+      // Register native callback to capture seek events
+      _ffiTestSawSeekStarted = false;
+      _ffiTestSawSeekCompleted = false;
+      ffi.setEventCallback(handle, _ffiTestCallback.nativeFunction);
+
       expect(ffi.play(handle, path, bufferSizeMs: -1), 0);
 
       // Wait for Playing (state == 4)
@@ -81,18 +98,13 @@ void main() {
           reason: 'position should be near seek target');
       expect(pos.totalMs, greaterThan(0), reason: 'totalMs must be known');
 
-      // Poll for SEEK_STARTED (2) and SEEK_COMPLETED (3) events
-      var sawStarted = false;
-      var sawCompleted = false;
+      // Wait for seek events via callback (up to 1 second)
       for (var i = 0; i < 100; i++) {
-        final event = ffi.pollEvent(handle);
-        if (event.eventType == 2) sawStarted = true;
-        if (event.eventType == 3) sawCompleted = true;
-        if (event.eventType == 0 && sawStarted && sawCompleted) break;
+        if (_ffiTestSawSeekStarted && _ffiTestSawSeekCompleted) break;
         await Future.delayed(const Duration(milliseconds: 10));
       }
-      expect(sawStarted, true, reason: 'must fire SEEK_STARTED');
-      expect(sawCompleted, true, reason: 'must fire SEEK_COMPLETED');
+      expect(_ffiTestSawSeekStarted, true, reason: 'must fire SEEK_STARTED');
+      expect(_ffiTestSawSeekCompleted, true, reason: 'must fire SEEK_COMPLETED');
     });
 
     test('seek clamp does not crash on absurd target', () async {

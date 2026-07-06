@@ -7,134 +7,23 @@ import 'models.dart';
 import 'tunes4r_player_ffi.dart';
 
 // ---------------------------------------------------------------------------
-// Named polling interval constants
+// Native event callback bridge
 // ---------------------------------------------------------------------------
 
-/// Interval (ms) between position polls, vsync-aligned (~60 Hz).
-const _positionPollIntervalMs = 16;
+/// Global reference used by the native callback trampoline.
+/// Set by [AudioEngine._startEvents] and cleared by [AudioEngine._stopEvents].
+AudioEngine? _eventCallbackTarget;
 
-/// Interval (ms) between event queue drains (~60 Hz).
-const _eventPollIntervalMs = 16;
-
-/// Interval (ms) between ring buffer state polls (5 Hz).
-const _bufferPollIntervalMs = 200;
-
-// ---------------------------------------------------------------------------
-// Poller engine — encapsulates timers and stream controllers
-// ---------------------------------------------------------------------------
-
-/// Encapsulates the periodic polling timers and their associated stream
-/// controllers for [AudioEngine]. Owns all five broadcast streams so that
-/// [AudioEngine] can focus on playback control and lifecycle.
-class _EnginePoller {
-  final Tunes4rFFI _ffi;
-  Pointer<Void>? _handle;
-  bool _active = false;
-
-  Timer? _positionPoller;
-  Timer? _eventPoller;
-  Timer? _bufferPoller;
-
-  final StreamController<PlaybackState> stateCtrl =
-      StreamController<PlaybackState>.broadcast();
-  final StreamController<PlaybackPosition> positionCtrl =
-      StreamController<PlaybackPosition>.broadcast();
-  final StreamController<EngineEvent> eventCtrl =
-      StreamController<EngineEvent>.broadcast();
-  final StreamController<AdaptiveRingBuffer> bufferCtrl =
-      StreamController<AdaptiveRingBuffer>.broadcast();
-
-  _EnginePoller(this._ffi);
-
-  /// Start all pollers using the given native handle.
-  ///
-  /// If already active (e.g. from a previous [start] call), the new handle
-  /// is silently ignored. This is safe because the handle is stable for the
-  /// engine's lifetime — it is only reassigned on a fresh [AudioEngine]
-  /// instance.
-  void start(Pointer<Void> handle) {
-    if (_active) return;
-    _active = true;
-    _handle = handle;
-
-    _positionPoller ??= Timer.periodic(
-      const Duration(milliseconds: _positionPollIntervalMs),
-      (_) {
-        if (!_active || _handle == null) return;
-        try {
-          positionCtrl.add(_ffi.getPosition(_handle!));
-        } catch (e) {
-          debugPrint('[tunes4r] position poll error: $e');
-        }
-      },
-    );
-
-    _eventPoller ??= Timer.periodic(
-      const Duration(milliseconds: _eventPollIntervalMs),
-      (_) {
-        if (!_active || _handle == null) return;
-        try {
-          while (true) {
-            final e = _ffi.pollEvent(_handle!);
-            if (e.eventType == engineEventNone) break;
-            final eventType = EngineEventType.fromValue(e.eventType);
-            final event = EngineEvent(
-              eventType: eventType,
-              intParam: e.intParam,
-            );
-            eventCtrl.add(event);
-            if (eventType == EngineEventType.stateChanged) {
-              stateCtrl.add(PlaybackState.fromValue(event.intParam));
-            }
-          }
-        } catch (e) {
-          debugPrint('[tunes4r] event poll error: $e');
-        }
-      },
-    );
-
-    _bufferPoller ??= Timer.periodic(
-      const Duration(milliseconds: _bufferPollIntervalMs),
-      (_) {
-        if (!_active || _handle == null) return;
-        try {
-          final b = _ffi.getDownloadBuffer(_handle!);
-          bufferCtrl.add(
-            AdaptiveRingBuffer(
-              capacityMs: b.capacityMs,
-              readOffsetMs: b.readOffsetMs,
-              writeOffsetMs: b.writeOffsetMs,
-              totalMs: b.totalMs,
-              isComplete: b.isComplete,
-            ),
-          );
-        } catch (e) {
-          debugPrint('[tunes4r] buffer poll error: $e');
-        }
-      },
-    );
-  }
-
-  /// Stop all pollers. Does not close stream controllers.
-  void stop() {
-    _active = false;
-    _handle = null;
-    _positionPoller?.cancel();
-    _positionPoller = null;
-    _eventPoller?.cancel();
-    _eventPoller = null;
-    _bufferPoller?.cancel();
-    _bufferPoller = null;
-  }
-
-  /// Stop polling and release stream controllers.
-  void dispose() {
-    stop();
-    stateCtrl.close();
-    positionCtrl.close();
-    eventCtrl.close();
-    bufferCtrl.close();
-  }
+/// Trampoline invoked directly from the Rust monitor thread when events fire.
+/// Drives [stateCtrl] and [eventCtrl] instantly instead of waiting for the
+/// next Dart event poller tick.
+//
+// Must be a top-level function (no closures) so it can be passed to
+// [NativeCallable.isolateLocal].
+void _onNativeEvent(int eventType, int intParam) {
+  final target = _eventCallbackTarget;
+  if (target == null) return;
+  target._handleNativeEvent(eventType, intParam);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +41,20 @@ class AudioEngine {
   final Tunes4rFFI _ffi;
   Pointer<Void>? _handle;
   bool _disposed = false;
-  final _EnginePoller _poller;
+  bool _active = false;
+
+  // Native event callback — created once, valid for isolate lifetime.
+  late final NativeCallable<Void Function(Int32, Int64)> _eventCallback =
+      NativeCallable<Void Function(Int32, Int64)>.isolateLocal(_onNativeEvent);
+
+  final StreamController<PlaybackState> stateCtrl =
+      StreamController<PlaybackState>.broadcast();
+  final StreamController<PlaybackPosition> positionCtrl =
+      StreamController<PlaybackPosition>.broadcast();
+  final StreamController<EngineEvent> eventCtrl =
+      StreamController<EngineEvent>.broadcast();
+  final StreamController<AdaptiveRingBuffer> bufferCtrl =
+      StreamController<AdaptiveRingBuffer>.broadcast();
 
   /// Returns the native handle or throws if disposed.
   Pointer<Void> get _h {
@@ -163,31 +65,21 @@ class AudioEngine {
   }
 
   /// Stream of playback state changes (driven by native events).
-  Stream<PlaybackState> get stateStream => _poller.stateCtrl.stream;
+  Stream<PlaybackState> get stateStream => stateCtrl.stream;
 
-  /// Stream of playback position updates.
-  ///
-  /// Emits a [PlaybackPosition] every 16ms (vsync-aligned) with the current
-  /// playhead and total duration. The stream also emits synchronously
-  /// inside [seek] and [play], so the UI gets instant feedback without
-  /// waiting for the next poll.
-  Stream<PlaybackPosition> get positionStream => _poller.positionCtrl.stream;
+  /// Stream of playback position updates driven by native events from the
+  /// Rust monitor thread (~50ms resolution).
+  Stream<PlaybackPosition> get positionStream => positionCtrl.stream;
 
   /// Stream of native engine events (state changes, seek lifecycle,
-  /// end-of-stream, errors). The previous `stateStream` is still driven
-  /// from these events for backward compatibility.
-  Stream<EngineEvent> get playbackEventStream => _poller.eventCtrl.stream;
+  /// end-of-stream, errors).
+  Stream<EngineEvent> get playbackEventStream => eventCtrl.stream;
 
   /// Stream of adaptive ring buffer updates for progressive streams
-  /// (HTTP / YouTube). Polled every 200ms — slow enough to be cheap, fast
-  /// enough to feel live as the ring fills.
-  ///
-  /// For local files the ring covers the full duration from the start
-  /// (`AdaptiveRingBuffer.isFullyBuffered == true`).
-  Stream<AdaptiveRingBuffer> get downloadBufferStream =>
-      _poller.bufferCtrl.stream;
+  /// (HTTP / YouTube). No longer polled — to be driven by native events.
+  Stream<AdaptiveRingBuffer> get downloadBufferStream => bufferCtrl.stream;
 
-  AudioEngine._(this._ffi, this._handle) : _poller = _EnginePoller(_ffi);
+  AudioEngine._(this._ffi, this._handle);
 
   /// Create a new audio engine instance.
   ///
@@ -222,14 +114,71 @@ class AudioEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Polling
+  // Native event callback lifecycle
   // ---------------------------------------------------------------------------
 
-  /// Start polling for state, position, and event updates.
-  /// Called automatically by [play], [resume], etc.
-  void startPolling() => _poller.start(_h);
+  /// Register the native event callback and catch up on any state that
+  /// may have been missed during the setup window.
+  void _startEvents() {
+    if (_active) return;
+    _active = true;
+    _eventCallbackTarget = this;
+    _ffi.setEventCallback(_h, _eventCallback.nativeFunction);
 
-  void stopPolling() => _poller.stop();
+    // Catch up on current state — the monitor thread may have already
+    // transitioned to Playing before the callback was registered.
+    final currentState = _ffi.getState(_h);
+    if (currentState >= 0) {
+      stateCtrl.add(PlaybackState.fromValue(currentState));
+    }
+  }
+
+  /// Handle a native event pushed from the Rust monitor thread.
+  /// Called via the trampoline [_onNativeEvent].
+  void _handleNativeEvent(int eventType, int intParam) {
+    if (!_active) return;
+    final handle = _handle;
+    if (handle == null) return;
+    try {
+      final e = EngineEvent(
+        eventType: EngineEventType.fromValue(eventType),
+        intParam: intParam,
+      );
+      eventCtrl.add(e);
+      switch (e.eventType) {
+        case EngineEventType.stateChanged:
+          stateCtrl.add(PlaybackState.fromValue(intParam));
+        case EngineEventType.positionUpdate:
+          positionCtrl.add(_ffi.getPosition(handle));
+        case EngineEventType.seekStarted:
+        case EngineEventType.seekCompleted:
+        case EngineEventType.endOfStream:
+        case EngineEventType.none:
+        case EngineEventType.positionReset:
+        case EngineEventType.error:
+        case EngineEventType.seekQueued:
+          break;
+      }
+    } catch (e) {
+      debugPrint('[tunes4r] native event handler error: $e');
+    }
+  }
+
+  /// Stop event callback.
+  void _stopEvents() {
+    _active = false;
+    if (_eventCallbackTarget == this) {
+      _eventCallbackTarget = null;
+    }
+  }
+
+  /// Release stream controllers.
+  void _closeStreams() {
+    stateCtrl.close();
+    positionCtrl.close();
+    eventCtrl.close();
+    bufferCtrl.close();
+  }
 
   // ---------------------------------------------------------------------------
   // Playback control
@@ -243,9 +192,18 @@ class AudioEngine {
   /// connection speed. Larger values allow wider seek range for
   /// progressive streams but use more memory.
   int play(String uri, {int bufferSizeMs = -1}) {
-    startPolling();
+    _startEvents();
     final result = _ffi.play(_h, uri, bufferSizeMs: bufferSizeMs);
-    _poller.positionCtrl.add(_ffi.getPosition(_h));
+    positionCtrl.add(_ffi.getPosition(_h));
+    return result;
+  }
+
+  /// Play a YouTube video by video ID. Resolves the CDN URL on a
+  /// background thread — no auto-detection needed.
+  int playYoutube(String videoId, {int bufferSizeMs = -1}) {
+    _startEvents();
+    final result = _ffi.playYoutube(_h, videoId, bufferSizeMs: bufferSizeMs);
+    positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
 
@@ -253,9 +211,9 @@ class AudioEngine {
   /// auto-detects the source type.
   @Deprecated('Use play() instead — it auto-detects the source type.')
   int playStream(String url) {
-    startPolling();
+    _startEvents();
     final result = _ffi.play(_h, url);
-    _poller.positionCtrl.add(_ffi.getPosition(_h));
+    positionCtrl.add(_ffi.getPosition(_h));
     return result;
   }
 
@@ -269,12 +227,12 @@ class AudioEngine {
 
   void stop() {
     _ffi.stop(_h);
-    stopPolling();
+    _stopEvents();
   }
 
   void seek(int positionMs) {
     _ffi.seek(_h, positionMs);
-    _poller.positionCtrl.add(_ffi.getPosition(_h));
+    positionCtrl.add(_ffi.getPosition(_h));
   }
 
   void setVolume(double volume) {
@@ -336,13 +294,15 @@ class AudioEngine {
 
   /// Release the native engine handle.
   ///
-  /// Order is intentional: pollers (timers + stream controllers) are stopped
+  /// Order is intentional: event callback and stream controllers are stopped
   /// and closed first, so any final native events during [destroyEngine] have
   /// nowhere to go — they are harmless because the engine is being torn down.
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _poller.dispose();
+    _stopEvents();
+    _closeStreams();
+    _eventCallback.close();
     if (_handle != null) {
       _ffi.destroyEngine(_handle!);
       _handle = null;

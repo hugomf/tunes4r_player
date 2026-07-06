@@ -87,7 +87,8 @@ enum EngineEventType {
   endOfStream(4),
   positionReset(5),
   error(6),
-  seekQueued(7);
+  seekQueued(7),
+  positionUpdate(8);
 
   final int value;
   const EngineEventType(this.value);

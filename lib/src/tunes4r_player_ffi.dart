@@ -19,6 +19,9 @@ typedef _EngineDestroyDart = void Function(Pointer<Void>);
 typedef _EnginePlayNative = Int32 Function(Pointer<Void>, Pointer<Utf8>, Int64);
 typedef _EnginePlayDart = int Function(Pointer<Void>, Pointer<Utf8>, int);
 
+typedef _EnginePlayYoutubeNative = Int32 Function(Pointer<Void>, Pointer<Utf8>, Int64);
+typedef _EnginePlayYoutubeDart = int Function(Pointer<Void>, Pointer<Utf8>, int);
+
 typedef _EngineCanSeekNative = Bool Function(Pointer<Void>);
 typedef _EngineCanSeekDart = bool Function(Pointer<Void>);
 
@@ -71,6 +74,9 @@ final class EngineEventStruct extends Struct {
 typedef _EnginePollEventNative = EngineEventStruct Function(Pointer<Void>);
 typedef _EnginePollEventDart = EngineEventStruct Function(Pointer<Void>);
 
+typedef _EngineSetEventCallbackNative = Void Function(Pointer<Void>, Pointer<NativeFunction<Void Function(Int32, Int64)>>);
+typedef _EngineSetEventCallbackDart = void Function(Pointer<Void>, Pointer<NativeFunction<Void Function(Int32, Int64)>>);
+
 const int engineEventNone = 0;
 const int engineEventStateChanged = 1;
 const int engineEventSeekStarted = 2;
@@ -79,7 +85,7 @@ const int engineEventEndOfStream = 4;
 const int engineEventPositionReset = 5;
 const int engineEventError = 6;
 const int engineEventSeekQueued = 7;
-
+const int engineEventPositionUpdate = 8;
 final class AdaptiveRingBufferStruct extends Struct {
   @Uint64()
   external int capacityMs;
@@ -119,6 +125,14 @@ typedef _YoutubeGetStreamUrlNative =
 typedef _YoutubeGetStreamUrlDart =
     Pointer<Utf8> Function(Pointer<Utf8>);
 
+typedef _YoutubeSearchNative =
+    Pointer<Utf8> Function(Pointer<Utf8>, Int32);
+typedef _YoutubeSearchDart =
+    Pointer<Utf8> Function(Pointer<Utf8>, int);
+
+typedef _YoutubeFreeStringNative = Void Function(Pointer<Utf8>);
+typedef _YoutubeFreeStringDart = void Function(Pointer<Utf8>);
+
 // ---------------------------------------------------------------------------
 // Low-level FFI wrapper
 // ---------------------------------------------------------------------------
@@ -134,6 +148,7 @@ class Tunes4rFFI {
   late _EngineCreateDart _create;
   late _EngineDestroyDart _destroy;
   late _EnginePlayDart _play;
+  late _EnginePlayYoutubeDart _playYoutube;
   late _EngineCanSeekDart _canSeek;
   late _EngineCanDownloadDart _canDownload;
   late _EnginePauseDart _pause;
@@ -146,12 +161,15 @@ class Tunes4rFFI {
   late _EngineGetStateDart _getState;
   late _EngineGetPositionDart _getPosition;
   late _EnginePollEventDart _pollEvent;
+  late _EngineSetEventCallbackDart _setEventCallback;
   late _EngineGetDownloadBufferDart _getDownloadBuffer;
   late _EngineGetBufferedPositionDart _getBufferedPosition;
   late _EngineGetSampleRateDart _getSampleRate;
   late _EngineGetChannelsDart _getChannels;
   late _EngineGetLoadErrorDart _getLoadError;
-  late _YoutubeGetStreamUrlDart _youtubeGetStreamUrl;
+  _YoutubeGetStreamUrlDart? _youtubeGetStreamUrl;
+  _YoutubeSearchDart? _youtubeSearch;
+  _YoutubeFreeStringDart? _youtubeFreeString;
 
   String? get initError => _initError;
   bool get isInitialized => _isInitialized;
@@ -256,6 +274,9 @@ class Tunes4rFFI {
     _play = l.lookup<NativeFunction<_EnginePlayNative>>(
       'audio_engine_play',
     ).asFunction();
+    _playYoutube = l.lookup<NativeFunction<_EnginePlayYoutubeNative>>(
+      'audio_engine_play_youtube',
+    ).asFunction();
     _canSeek = l.lookup<NativeFunction<_EngineCanSeekNative>>(
       'audio_engine_can_seek',
     ).asFunction();
@@ -292,6 +313,10 @@ class Tunes4rFFI {
     _pollEvent = l.lookup<NativeFunction<_EnginePollEventNative>>(
       'audio_engine_poll_event',
     ).asFunction();
+    _setEventCallback =
+        l.lookup<NativeFunction<_EngineSetEventCallbackNative>>(
+          'audio_engine_set_event_callback',
+        ).asFunction();
     _getDownloadBuffer =
         l.lookup<NativeFunction<_EngineGetDownloadBufferNative>>(
           'audio_engine_get_download_buffer',
@@ -309,10 +334,32 @@ class Tunes4rFFI {
     _getLoadError = l.lookup<NativeFunction<_EngineGetLoadErrorNative>>(
       'audio_engine_get_load_error',
     ).asFunction();
-    _youtubeGetStreamUrl =
-        l.lookup<NativeFunction<_YoutubeGetStreamUrlNative>>(
-          'youtube_get_stream_url',
-        ).asFunction();
+    _bindYoutubeSymbols(l);
+  }
+
+  void _bindYoutubeSymbols(DynamicLibrary l) {
+    try {
+      _youtubeGetStreamUrl =
+          l.lookup<NativeFunction<_YoutubeGetStreamUrlNative>>(
+            'youtube_get_stream_url',
+          ).asFunction();
+    } catch (_) {
+      debugPrint('[tunes4r] Optional symbol not found: youtube_get_stream_url');
+    }
+    try {
+      _youtubeSearch = l.lookup<NativeFunction<_YoutubeSearchNative>>(
+        'youtube_search',
+      ).asFunction();
+    } catch (_) {
+      debugPrint('[tunes4r] Optional symbol not found: youtube_search');
+    }
+    try {
+      _youtubeFreeString = l.lookup<NativeFunction<_YoutubeFreeStringNative>>(
+        'youtube_free_string',
+      ).asFunction();
+    } catch (_) {
+      debugPrint('[tunes4r] Optional symbol not found: youtube_free_string');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -331,6 +378,15 @@ class Tunes4rFFI {
     }
   }
 
+  int playYoutube(Pointer<Void> h, String videoId, {int bufferSizeMs = -1}) {
+    final ptr = videoId.toNativeUtf8();
+    try {
+      return _playYoutube(h, ptr, bufferSizeMs);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
   bool canSeek(Pointer<Void> h) => _canSeek(h);
   bool canDownload(Pointer<Void> h) => _canDownload(h);
 
@@ -344,6 +400,11 @@ class Tunes4rFFI {
   int getState(Pointer<Void> h) => _getState(h);
   PlaybackPosition getPosition(Pointer<Void> h) => _getPosition(h);
   EngineEventStruct pollEvent(Pointer<Void> h) => _pollEvent(h);
+  void setEventCallback(
+    Pointer<Void> h,
+    Pointer<NativeFunction<Void Function(Int32, Int64)>> cb,
+  ) =>
+      _setEventCallback(h, cb);
   AdaptiveRingBufferStruct getDownloadBuffer(Pointer<Void> h) =>
       _getDownloadBuffer(h);
 
@@ -360,15 +421,33 @@ class Tunes4rFFI {
   }
 
   String? youtubeGetStreamUrl(String videoId) {
+    final fn = _youtubeGetStreamUrl;
+    if (fn == null) return null;
     final ptr = videoId.toNativeUtf8();
     try {
-      final resultPtr = _youtubeGetStreamUrl(ptr);
+      final resultPtr = fn(ptr);
       if (resultPtr == nullptr) return null;
       final s = resultPtr.toDartString();
       calloc.free(resultPtr);
       return s.isEmpty ? null : s;
     } finally {
       calloc.free(ptr);
+    }
+  }
+
+  String? youtubeSearch(String query, int limit) {
+    final fn = _youtubeSearch;
+    final free = _youtubeFreeString;
+    if (fn == null) return null;
+    final queryPtr = query.toNativeUtf8();
+    try {
+      final resultPtr = fn(queryPtr, limit);
+      if (resultPtr == nullptr) return null;
+      final s = resultPtr.toDartString();
+      free?.call(resultPtr);
+      return s.isEmpty ? null : s;
+    } finally {
+      calloc.free(queryPtr);
     }
   }
 
