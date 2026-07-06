@@ -164,6 +164,33 @@ Fixed two issues blocking the seek slider from appearing for local audio files, 
 - Removed guard condition `seekClock.durationMs <= 0` from the position update path — now always pushes when `totalMs > 0`
 - `tar` pipe over `cp -R` for xcframework copies to avoid APFS clone corruption
 
+## 2026-07-06 — Persistent YouTube stream cache
+
+### Summary
+Added persistent file caching for YouTube streams. On first play, the FetchEngine writes all downloaded bytes to a cache file (`~/Library/Caches/com.tunes4r.player/youtube/{video_id}`). When the download completes (content_length reached), the `.tmp` file is renamed to the final path. Subsequent plays check for the cached file and read from disk via `FileSourceProvider` — no network resolution or download needed.
+
+### Changes
+
+**player/src/fetch.rs**
+- Added `cache_path: Option<(PathBuf, PathBuf)>` field to `FetchEngine` (tmp path, final path)
+- Added `set_cache_path()` method
+- Threaded cache_path through `start()` → `run()`
+- In the `Ok(n)` branch: after writing to `byte_cache`, also seek+write to the tmp cache file
+- When `current_pos + n >= content_length`, rename `.tmp` → final (atomic on same filesystem)
+
+**ffi/src/ffi.rs**
+- Added `youtube_headers()` helper (mirrors the player crate's private headers)
+- Added `cache_dir()` helper: `~/Library/Caches/com.tunes4r.player/youtube/` on macOS
+- Modified `audio_engine_play_youtube`:
+  - Cache hit → `p.start(format!("file://{}", cache_path))` — plays from local file
+  - Cache miss → constructs `HttpSource` + `FetchEngine` directly, sets cache_path, `p.start_from_source()`
+  - Removes stale `.tmp` files from interrupted downloads before starting fresh
+
+### Test results
+- `cargo test -p tunes4r-player`: 83/83 pass
+- `cargo check -p tunes4r` (FFI crate): compiles clean
+- `./scripts/build_rust.sh macos debug`: ✓ Built
+
 ## 2026-07-06 — Fix `_activeSource` race + state event loss
 
 ### Summary

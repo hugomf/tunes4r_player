@@ -17,10 +17,14 @@ typedef _EngineDestroyNative = Void Function(Pointer<Void>);
 typedef _EngineDestroyDart = void Function(Pointer<Void>);
 
 typedef _EnginePlayNative = Int32 Function(Pointer<Void>, Pointer<Utf8>, Int64);
+
 typedef _EnginePlayDart = int Function(Pointer<Void>, Pointer<Utf8>, int);
 
 typedef _EnginePlayYoutubeNative = Int32 Function(Pointer<Void>, Pointer<Utf8>, Int64);
 typedef _EnginePlayYoutubeDart = int Function(Pointer<Void>, Pointer<Utf8>, int);
+
+typedef _EngineSetCacheDirNative = Int32 Function(Pointer<Utf8>);
+typedef _EngineSetCacheDirDart = int Function(Pointer<Utf8>);
 
 typedef _EngineCanSeekNative = Bool Function(Pointer<Void>);
 typedef _EngineCanSeekDart = bool Function(Pointer<Void>);
@@ -149,6 +153,7 @@ class Tunes4rFFI {
   late _EngineDestroyDart _destroy;
   late _EnginePlayDart _play;
   late _EnginePlayYoutubeDart _playYoutube;
+  late _EngineSetCacheDirDart _setCacheDir;
   late _EngineCanSeekDart _canSeek;
   late _EngineCanDownloadDart _canDownload;
   late _EnginePauseDart _pause;
@@ -276,6 +281,9 @@ class Tunes4rFFI {
     ).asFunction();
     _playYoutube = l.lookup<NativeFunction<_EnginePlayYoutubeNative>>(
       'audio_engine_play_youtube',
+    ).asFunction();
+    _setCacheDir = l.lookup<NativeFunction<_EngineSetCacheDirNative>>(
+      'audio_engine_set_cache_dir',
     ).asFunction();
     _canSeek = l.lookup<NativeFunction<_EngineCanSeekNative>>(
       'audio_engine_can_seek',
@@ -451,6 +459,17 @@ class Tunes4rFFI {
     }
   }
 
+  /// Set the cache directory for YouTube streams.
+  /// Call before any play_youtube call. On Android, pass the result of
+  /// `getApplicationCacheDirectory()` from path_provider.
+  int setCacheDir(String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      return _setCacheDir(pathPtr);
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
 }
 
 /// Convenience singleton.

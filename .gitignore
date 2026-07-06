@@ -21,3 +21,6 @@ android/.gradle/
 
 # macOS build artifacts
 macos/tunes4r_player/.build/
+
+# Plugin root SPM copy
+tunes4r_player/Frameworks/
