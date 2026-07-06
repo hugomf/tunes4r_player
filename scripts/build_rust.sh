@@ -128,6 +128,10 @@ build_macos() {
   # install_name (which they do, since cargo writes both with the path under
   # target/<arch>/release/deps/). Make a universal (fat) dylib with lipo
   # first, then wrap it in a single .framework and pass that to xcodebuild.
+  #
+  # IMPORTANT: Output the xcframework to a temp dir *outside* the project
+  # directory and then copy it in. Writing directly into macos/Frameworks/
+  # triggers a deletion race (likely Flutter's Xcode project watcher).
   local tmpdir=""
   tmpdir="$(mktemp -d)"
   # shellcheck disable=SC2064
@@ -140,29 +144,44 @@ build_macos() {
   local fw="$tmpdir/libtunes4r.framework"
   _make_framework "$fat_dylib" "$fw"
 
+  local xc_out="$tmpdir/libtunes4r.xcframework"
   if ! xcodebuild -create-xcframework \
         -framework "$fw" \
-        -output "$out_dir/libtunes4r.xcframework" >/dev/null 2>&1; then
+        -output "$xc_out" >/dev/null 2>&1; then
     echo "ERROR: xcodebuild -create-xcframework failed; re-running with output"
     xcodebuild -create-xcframework \
         -framework "$fw" \
-        -output "$out_dir/libtunes4r.xcframework"
+        -output "$xc_out"
     exit 1
   fi
 
+  # Copy from temp to both destinations in one shot. Use a tar pipe to
+  # bypass APFS clone behavior (which can get corrupted when rm -rf of
+  # the clone source triggers a race with install_name_tool).
+  local spm_dir="$out_dir/../tunes4r_player/Frameworks"
+  mkdir -p "$spm_dir"
+  tar -C "$tmpdir" -cf - libtunes4r.xcframework \
+    | tar -C "$out_dir" -xf -
+  tar -C "$tmpdir" -cf - libtunes4r.xcframework \
+    | tar -C "$spm_dir" -xf -
+
   trap - EXIT
   rm -rf "$tmpdir"
+
+  # Verify both copies exist
+  if [ ! -d "$out_dir/libtunes4r.xcframework" ]; then
+    echo "ERROR: xcframework not found at $out_dir/libtunes4r.xcframework"
+    exit 1
+  fi
+  if [ ! -d "$spm_dir/libtunes4r.xcframework" ]; then
+    echo "ERROR: xcframework not found at $spm_dir/libtunes4r.xcframework"
+    exit 1
+  fi
 
   # 2) Also drop a flat dylib for any tooling that loads it without an
   #    .framework wrapper (raw `DynamicLibrary.open('libtunes4r.dylib')`).
   cp "$arm_lib" "$out_dir/libtunes4r.dylib"
   install_name_tool -id "@rpath/libtunes4r.dylib" "$out_dir/libtunes4r.dylib"
-
-  # 3) Copy into the SPM package directory so `flutter run` picks it up
-  local spm_dir="$out_dir/../tunes4r_player/Frameworks"
-  mkdir -p "$spm_dir"
-  rm -rf "$spm_dir/libtunes4r.xcframework"
-  cp -R "$out_dir/libtunes4r.xcframework" "$spm_dir/"
   cp "$arm_lib" "$spm_dir/libtunes4r.dylib"
   install_name_tool -id "@rpath/libtunes4r.dylib" "$spm_dir/libtunes4r.dylib"
 

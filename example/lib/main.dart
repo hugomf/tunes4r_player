@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:tunes4r_player/tunes4r_player.dart';
 
@@ -28,7 +29,8 @@ class Tunes4rPlayerExampleApp extends StatefulWidget {
 
 enum _SourceType { none, file, youtube, live }
 
-class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
+class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp>
+    with SingleTickerProviderStateMixin {
   AudioEngine? _engine;
   bool _ready = false;
   String _error = '';
@@ -63,7 +65,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
         DateTime.now().difference(_lastSeekEnd!).inMilliseconds < 500) {
       return _sliderTargetMs;
     }
-    return _positionMs;
+    return _engine?.displayPositionMs ?? 0;
   }
 
   // ── Current source tracking ──────────────────────────────────────────
@@ -79,9 +81,14 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
   StreamSubscription<EngineEvent>? _eventSub;
   StreamSubscription<AdaptiveRingBuffer>? _bufferSub;
 
+  late final Ticker _frameTicker;
+
   @override
   void initState() {
     super.initState();
+    _frameTicker = createTicker((elapsed) {
+      if (mounted) setState(() {});
+    })..start();
     _init();
   }
 
@@ -91,10 +98,10 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
 
       _stateSub = _engine!.stateStream.listen((state) {
         if (!mounted) return;
+        debugPrint('[example] stateStream: state=$state (was $_currentState) activeSource=$_activeSource');
         setState(() {
           _currentState = state;
           if (state == PlaybackState.stopped) {
-            _activeSource = _SourceType.none;
             _error = _engine?.loadError ?? _error;
           }
           if (state == PlaybackState.finished) {
@@ -133,10 +140,11 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
           case EngineEventType.error:
             setState(() => _lastSeekEvent = 'Error: $pos');
             break;
-          case EngineEventType.none:
-          case EngineEventType.stateChanged:
+          case EngineEventType.positionUpdate:
           case EngineEventType.positionReset:
           case EngineEventType.seekQueued:
+          case EngineEventType.none:
+          case EngineEventType.stateChanged:
             break;
         }
       });
@@ -181,8 +189,8 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
 
   void _playFile() {
     if (_engine == null || _filePath.isEmpty) return;
-    _engine!.play(_filePath);
     setState(() => _activeSource = _SourceType.file);
+    _engine!.play(_filePath);
   }
 
   Future<void> _playYoutube() async {
@@ -193,16 +201,16 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     final url = (uri != null && uri.host.isNotEmpty)
         ? input
         : 'https://www.youtube.com/watch?v=$input';
-    _engine!.play(url);
     setState(() => _activeSource = _SourceType.youtube);
+    _engine!.play(url);
   }
 
   void _playLive() {
     if (_engine == null) return;
     final url = _liveController.text.trim();
     if (url.isEmpty) return;
-    _engine!.play(url);
     setState(() => _activeSource = _SourceType.live);
+    _engine!.play(url);
   }
 
   // ── Buffered seek slider ─────────────────────────────────────────────
@@ -272,7 +280,10 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
               onPlay: _playFile,
               onPause: () => _engine?.pause(),
               onResume: () => _engine?.resume(),
-              onStop: () => _engine?.stop(),
+              onStop: () {
+                _engine?.stop();
+                setState(() => _activeSource = _SourceType.none);
+              },
             ),
             const SizedBox(height: 8),
             _sliderForSource(_SourceType.file),
@@ -322,7 +333,10 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
               onPlay: _playYoutube,
               onPause: () => _engine?.pause(),
               onResume: () => _engine?.resume(),
-              onStop: () => _engine?.stop(),
+              onStop: () {
+                _engine?.stop();
+                setState(() => _activeSource = _SourceType.none);
+              },
             ),
             const SizedBox(height: 8),
             _sliderForSource(_SourceType.youtube, mode: SliderMode.streaming),
@@ -374,7 +388,10 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
             _transportRow(
               onPlay: _playLive,
               onPause: () => _engine?.pause(),
-              onStop: () => _engine?.stop(),
+              onStop: () {
+                _engine?.stop();
+                setState(() => _activeSource = _SourceType.none);
+              },
             ),
             const SizedBox(height: 8),
             _sliderForSource(_SourceType.live),
@@ -444,6 +461,7 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp> {
     _positionSub?.cancel();
     _bufferSub?.cancel();
     _eventSub?.cancel();
+    _frameTicker.dispose();
     _ytController.dispose();
     _liveController.dispose();
     _engine?.dispose();

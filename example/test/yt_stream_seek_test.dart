@@ -32,12 +32,10 @@ String? _findDylib() {
 }
 
 // Native event callback state — populated by trampoline, read by test.
-int _ytTestSeekEventCount = 0;
 List<int> _ytTestSeekEventTypes = [];
 void _ytTestOnEvent(int type, int _) {
   // 2 = seekStarted, 3 = seekCompleted
   if (type == 2 || type == 3) {
-    _ytTestSeekEventCount++;
     _ytTestSeekEventTypes.add(type);
   }
 }
@@ -94,7 +92,6 @@ void main() {
       debugPrint('[yt-test] Buffer ready (${buf.writeOffsetMs}ms). Starting seeks...');
 
       // Register native callback to track seek events
-      _ytTestSeekEventCount = 0;
       _ytTestSeekEventTypes = [];
       ffi.setEventCallback(handle, _ytTestCallback.nativeFunction);
 

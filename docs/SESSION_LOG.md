@@ -1,5 +1,35 @@
 # Session Log
 
+## 2026-07-06 — Fix seek from VecDeque/ringbuf mismatch: clear_audio_queue was no-op
+
+### Summary
+Fixed seek bug where `clear_audio_queue()` was always a no-op because `from_source()` used the ring buffer path (`audio_queue: None`). After seek, up to 15 seconds of old audio played before new data arrived from the target position. Switched `from_source()` to use VecDeque (`audio_queue`) + `build_file_output()` so seek can properly flush old audio.
+
+### Changes
+
+**session.rs**
+- `from_source()`: Replaced ring buffer (`HeapRb` + `build_output`) with `Arc<Mutex<VecDeque>>` + `build_file_output`
+- Now passes `audio_queue: Some(aq_clone)` to `DecodeEngine::run` (was `None`)
+- Stored `audio_queue: Some(audio_queue)` in `PlaybackSession` (was `None`)
+- Dummy `HeapRb::new(64).split().0` passed as producer (unused when VecDeque path is active)
+
+**decode.rs**
+- Added VecDeque backpressure loop after audio push (mirrors ring buffer backpressure)
+- Prevents decode thread from running infinitely fast on streaming sources when VecDeque is used
+
+### Root cause
+- `from_source()` used `build_output()` which reads from a ring buffer consumer
+- `clear_audio_queue()` checked `audio_queue.is_some()` — always `None` → no-op
+- Old audio (up to 15s of ring buffer capacity) continued playing after seek
+- Combined with `reset_output_position()` jumping the display to target, audio/position mismatch caused "restart from 0" perception
+
+### Test results
+- `cargo test -p tunes4r-player --lib`: 83/83 pass (all lib + integration tests)
+- `cargo test -p tunes4r-player --all-targets`: 90/93 pass (3 benchmark failures need local HTTP server — pre-existing)
+- `cargo test` (ffi crate): 15/16 pass (1 YouTube test fails: network — pre-existing)
+- `flutter build macos --debug`: ✓ Built
+- `./scripts/build_rust.sh macos debug`: ✓ dylib + XCFramework rebuilt
+
 ## 2026-07-02 — DecodeEngine refactor: fix file seek delay + SEEK_COMPLETED event
 
 ### Summary
@@ -106,3 +136,62 @@ platform verifier, log buffer, and orphaned utilities.
 - Rust rust/src/ffi.rs: clean (34 #[no_mangle], 28 fn decls, no orphans)
 - The old committed ffi.rs uses `tunes4r_core` crate which conflicts with Cargo.toml's `tunes4r-player`
 - Dylib rebuild requires restoring the Player-based ffi.rs (lost in earlier git checkout)
+
+## 2026-07-06 — Seek slider fix + xcframework build script fix
+
+### Summary
+Fixed two issues blocking the seek slider from appearing for local audio files, and fixed the xcframework build step that silently deleted the framework.
+
+### Changes
+
+**scripts/build_rust.sh**
+- Replaced `cp -R` for xcframework copies with `tar` pipe to bypass APFS clone corruption
+- The xcframework was silently deleted after `install_name_tool` ran on the sibling dylib when using `cp -R` (APFS clone shared blocks would corrupt). The `tar` pipe creates a true copy.
+- xcframework now goes to both `macos/Frameworks/` and `macos/tunes4r_player/Frameworks/` in one shot before cleanup
+
+**lib/src/audio_engine.dart**
+- Replaced `_syncPositionAfterPlay` + `_deferPositionSync` with `_syncPositionAfterPlayImpl` — a retry loop using `Timer` that retries every 50ms (up to 10 times) until `totalMs > 0`
+- Root cause: `_deferPositionSync` fired at 100ms but `cached_total_duration_ms` was still 0 because the background thread holds the player lock for ~150ms while setting up audio output (cpal/CoreAudio). The monitor thread is blocked from updating the cache during that time.
+- Removed push of `{0, 0}` position to stream to avoid setting `_durationMs = 0`
+- Removed duplicate `_syncPositionAfterPlay` and `playStream` method declarations
+
+### Test results
+- `cargo test --lib` (tunes4r-core): 90/90 pass
+- `flutter build macos --debug`: ✓ Built
+
+### Key decisions
+- Retry loop is simpler and more robust than the single-shot `Future.delayed` approach
+- Removed guard condition `seekClock.durationMs <= 0` from the position update path — now always pushes when `totalMs > 0`
+- `tar` pipe over `cp -R` for xcframework copies to avoid APFS clone corruption
+
+## 2026-07-06 — Fix `_activeSource` race + state event loss
+
+### Summary
+Fixed a root-cause race where `_startEvents()` pushed the initial Stopped state to `stateCtrl`, triggering the example app's state listener to reset `_activeSource = _SourceType.none` — overwriting the value set by `_playFile()`'s `setState`. Also fixed STATE_CHANGED events being lost in the single packed-event slot.
+
+### Changes
+
+**lib/src/audio_engine.dart**
+- Removed `stateCtrl.add(PlaybackState.fromValue(currentState))` from `_startEvents()` — the state stream controller should only get events from the Rust event handler, not from initialization
+- Added state sync (`_ffi.getState()`) to the `positionUpdate` event handler branch, because Rust fires both STATE_CHANGED and POSITION_UPDATE in the same monitor tick, overwriting the packed-event slot with POSITION_UPDATE. Every position update now also pushes the current state.
+- Added `stateCtrl.add(PlaybackState.stopped)` to `_stopEvents()` BEFORE clearing the event callback — the event timer is about to be cancelled, so no more events will arrive to push the Stopped state
+
+**example/lib/main.dart**
+- Removed `_activeSource = _SourceType.none` from the state listener's `Stopped` branch — it was the cause of the race. The Stopped state fires during `_startEvents()` before `_playFile()`'s `setState` had a chance to run (even with setState moved before `play()`).
+- Added `setState(() => _activeSource = _SourceType.none)` to all three Stop button callbacks (file, youtube, live) — `_activeSource` is now explicitly reset only on user-initiated stops
+- Changed `_playYoutube()` and `_playLive()` to set `_activeSource` BEFORE `_engine!.play(url)`, matching `_playFile()`'s ordering
+- Removed extraneous debug prints
+
+### Root cause of the `_activeSource` race
+1. User taps Play → `_playFile()` → `setState(() => _activeSource = file)`
+2. `_engine!.play()` → `_startEvents()` → `stateCtrl.add(stopped)` (synchronous)
+3. Listener fires → `setState(() => _activeSource = _SourceType.none)` (overwrites step 1)
+4. `_playFile()`'s `setState` AFTER `play()` had already run, but the listener's setState in step 3 runs inside `play()` AFTER `_startEvents()` returns but BEFORE `play()` returns — so the listener's `_activeSource = none` executes after `_playFile`'s `setState = file`, maintaining the overwrite
+
+### State event loss
+Rust fires events into a single `_gLastPackedEvent` field using OR assignment. When STATE_CHANGED and POSITION_UPDATE fire in the same monitor tick (which they always do for the Stopped → Playing transition), POSITION_UPDATE overwrites STATE_CHANGED. The `stateChanged` handler would never fire for Playing. Added state read into the `positionUpdate` handler so state is always synced.
+
+### Test results
+- `dart analyze lib/src/audio_engine.dart example/lib/main.dart`: No issues found
+- Full visual verification blocked by Rust audio thread crash (separate issue)
+- Debug log path verified: state syncs via positionUpdate → `stateCtrl.add(Playing)` → listener sees Playing (not Stopped) → `_activeSource` not reset → slider shows

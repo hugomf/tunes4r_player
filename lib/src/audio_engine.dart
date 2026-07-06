@@ -6,24 +6,73 @@ import 'package:flutter/foundation.dart';
 import 'models.dart';
 import 'tunes4r_player_ffi.dart';
 
+// HACK: set to true to log position-update diagnostics
+bool _debugPos = true;
+
 // ---------------------------------------------------------------------------
-// Native event callback bridge
+// Native event bridge
 // ---------------------------------------------------------------------------
 
-/// Global reference used by the native callback trampoline.
-/// Set by [AudioEngine._startEvents] and cleared by [AudioEngine._stopEvents].
-AudioEngine? _eventCallbackTarget;
+/// Single-packed event written by the Rust monitor thread via
+/// [NativeCallable.isolateGroupBound] and drained by the event-dispatch Timer.
+/// Packed as (eventType << 56) | (intParam & 0xFF...).
+/// A single int64 guarantees atomic read/write on arm64.
+int _gLastPackedEvent = 0;
 
-/// Trampoline invoked directly from the Rust monitor thread when events fire.
-/// Drives [stateCtrl] and [eventCtrl] instantly instead of waiting for the
-/// next Dart event poller tick.
-//
-// Must be a top-level function (no closures) so it can be passed to
-// [NativeCallable.isolateLocal].
+/// Trampoline called from the Rust monitor thread via
+/// [NativeCallable.isolateGroupBound]. Writes the packed event to
+/// [_gLastPackedEvent] where the event-dispatch Timer picks it up.
+/// Must only access top-level static fields (isolateGroupBound restriction).
 void _onNativeEvent(int eventType, int intParam) {
-  final target = _eventCallbackTarget;
-  if (target == null) return;
-  target._handleNativeEvent(eventType, intParam);
+  _gLastPackedEvent =
+      ((eventType & 0xFF) << 56) | (intParam & 0x00FFFFFFFFFFFFFF);
+}
+
+// ---------------------------------------------------------------------------
+// SeekClock — interpolates position between native sync pulses
+// ---------------------------------------------------------------------------
+
+/// Local clock that interpolates the playback position between periodic
+/// sync pulses from the Rust monitor thread (~250ms interval). The UI
+/// reads [displayPositionMs] every frame (via Ticker) without crossing
+/// the FFI boundary — a pure-Dart computation.
+class SeekClock {
+  int _lastKnownMs = 0;
+  int _durationMs = 0;
+  bool _isPlaying = false;
+  DateTime _lastSyncAt = DateTime.now();
+
+  /// Feed a position update from the native engine.
+  void onPositionUpdate(int positionMs, int totalMs) {
+    _lastKnownMs = positionMs;
+    if (totalMs > 0) _durationMs = totalMs;
+    _lastSyncAt = DateTime.now();
+  }
+
+  /// Mark playback as active (interpolation runs) or inactive (returns last
+  /// known position unchanged).
+  void setPlaying(bool playing) {
+    _isPlaying = playing;
+    if (playing) {
+      _lastSyncAt = DateTime.now();
+    }
+  }
+
+  /// Interpolated position in milliseconds. Pure Dart — no FFI.
+  int get displayPositionMs {
+    if (!_isPlaying) return _lastKnownMs;
+    final elapsed = DateTime.now().difference(_lastSyncAt).inMilliseconds;
+    final interpolated = _lastKnownMs + elapsed;
+    return interpolated.clamp(0, _durationMs > 0 ? _durationMs : interpolated);
+  }
+
+  int get durationMs => _durationMs;
+
+  void reset() {
+    _lastKnownMs = 0;
+    _isPlaying = false;
+    _lastSyncAt = DateTime.now();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -43,9 +92,9 @@ class AudioEngine {
   bool _disposed = false;
   bool _active = false;
 
-  // Native event callback — created once, valid for isolate lifetime.
-  late final NativeCallable<Void Function(Int32, Int64)> _eventCallback =
-      NativeCallable<Void Function(Int32, Int64)>.isolateLocal(_onNativeEvent);
+  // Native event callback — isolateGroupBound allows invocation from any
+  // native thread. The callback can only access top-level static fields.
+  late final NativeCallable<Void Function(Int32, Int64)> _eventCallback;
 
   final StreamController<PlaybackState> stateCtrl =
       StreamController<PlaybackState>.broadcast();
@@ -55,6 +104,9 @@ class AudioEngine {
       StreamController<EngineEvent>.broadcast();
   final StreamController<AdaptiveRingBuffer> bufferCtrl =
       StreamController<AdaptiveRingBuffer>.broadcast();
+
+  /// Interpolation clock for smooth UI without per-frame FFI.
+  final SeekClock seekClock = SeekClock();
 
   /// Returns the native handle or throws if disposed.
   Pointer<Void> get _h {
@@ -67,24 +119,26 @@ class AudioEngine {
   /// Stream of playback state changes (driven by native events).
   Stream<PlaybackState> get stateStream => stateCtrl.stream;
 
-  /// Stream of playback position updates driven by native events from the
-  /// Rust monitor thread (~50ms resolution).
+  /// Stream of playback position updates.
   Stream<PlaybackPosition> get positionStream => positionCtrl.stream;
 
-  /// Stream of native engine events (state changes, seek lifecycle,
-  /// end-of-stream, errors).
+  /// Stream of native engine events.
   Stream<EngineEvent> get playbackEventStream => eventCtrl.stream;
 
-  /// Stream of adaptive ring buffer updates for progressive streams
-  /// (HTTP / YouTube). No longer polled — to be driven by native events.
+  /// Stream of adaptive ring buffer updates.
   Stream<AdaptiveRingBuffer> get downloadBufferStream => bufferCtrl.stream;
 
-  AudioEngine._(this._ffi, this._handle);
+  /// Interpolated position in milliseconds. Pure Dart — no FFI call.
+  int get displayPositionMs => seekClock.displayPositionMs;
 
-  /// Create a new audio engine instance.
-  ///
-  /// Call [initialize] first on the global [Tunes4rFFI] singleton.
-  /// Throws [Tunes4rEngineException] if the native engine cannot be created.
+  /// Duration in milliseconds from the last sync pulse.
+  int get displayDurationMs => seekClock.durationMs;
+
+  AudioEngine._(this._ffi, this._handle) {
+    _eventCallback = NativeCallable<Void Function(Int32, Int64)>
+        .isolateGroupBound(_onNativeEvent);
+  }
+
   static AudioEngine create({Tunes4rFFI? ffi}) {
     final engineFfi = ffi ?? tunes4rFFI;
     if (!engineFfi.isInitialized) {
@@ -99,7 +153,6 @@ class AudioEngine {
     return AudioEngine._(engineFfi, handle);
   }
 
-  /// Same as [create] but also initializes FFI if needed.
   static Future<AudioEngine> createWithInit({
     Tunes4rFFI? ffi,
     EngineConfig config = const EngineConfig(),
@@ -117,24 +170,67 @@ class AudioEngine {
   // Native event callback lifecycle
   // ---------------------------------------------------------------------------
 
-  /// Register the native event callback and catch up on any state that
-  /// may have been missed during the setup window.
+  /// Event-dispatch Timer (pure Dart, no FFI/Mutex). Fires at ~250ms to
+  /// drain the packed event written by the Rust monitor thread (when the
+  /// native callback actually works), PLUS polls the cached position/state
+  /// directly every tick (always works).
+  Timer? _eventTimer;
+  int _lastPolledPosMs = 0;
+  int _lastPolledDurMs = 0;
+  int _lastPolledState = -1;
+
   void _startEvents() {
     if (_active) return;
     _active = true;
-    _eventCallbackTarget = this;
+
     _ffi.setEventCallback(_h, _eventCallback.nativeFunction);
 
-    // Catch up on current state — the monitor thread may have already
-    // transitioned to Playing before the callback was registered.
+    // Pure-Dart dispatch Timer at ~250ms.
+    _eventTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _processPendingEvents(),
+    );
+
     final currentState = _ffi.getState(_h);
     if (currentState >= 0) {
-      stateCtrl.add(PlaybackState.fromValue(currentState));
+      final playing = currentState == 2;
+      seekClock.reset();
+      seekClock.setPlaying(playing);
     }
   }
 
-  /// Handle a native event pushed from the Rust monitor thread.
-  /// Called via the trampoline [_onNativeEvent].
+  void _processPendingEvents() {
+    // 1. Drain any packed event from the native callback (best-effort)
+    final packed = _gLastPackedEvent;
+    if (packed != 0) {
+      _gLastPackedEvent = 0;
+      final eventType = packed >> 56;
+      final intParam = packed & 0x00FFFFFFFFFFFFFF;
+      _handleNativeEvent(eventType, intParam);
+    }
+
+    // 2. Poll cached state/position directly from Rust every tick.
+    final handle = _handle;
+    if (handle == null) { debugPrint('[tunes4r] poll: handle is null'); return; }
+    final pos = _ffi.getPosition(handle);
+    final st = _ffi.getState(handle);
+    if (pos.currentMs != _lastPolledPosMs || st != _lastPolledState) {
+      debugPrint('[tunes4r] poll: pos=${pos.currentMs}/${pos.totalMs} st=$st — pushing');
+      _lastPolledPosMs = pos.currentMs;
+      _lastPolledState = st;
+      seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
+      seekClock.setPlaying(st == 2);
+      positionCtrl.add(pos);
+      stateCtrl.add(PlaybackState.fromValue(st));
+      if (st == 4) {
+        debugPrint('[tunes4r] poll: Finished — stopping event timer');
+        _active = false;
+        _eventTimer?.cancel();
+        _eventTimer = null;
+      }
+    }
+  }
+
   void _handleNativeEvent(int eventType, int intParam) {
     if (!_active) return;
     final handle = _handle;
@@ -147,9 +243,20 @@ class AudioEngine {
       eventCtrl.add(e);
       switch (e.eventType) {
         case EngineEventType.stateChanged:
+          if (_debugPos) debugPrint('[tunes4r] event: stateChanged=${intParam}');
+          seekClock.setPlaying(intParam == 2);
           stateCtrl.add(PlaybackState.fromValue(intParam));
         case EngineEventType.positionUpdate:
-          positionCtrl.add(_ffi.getPosition(handle));
+          if (_debugPos) debugPrint('[tunes4r] event: positionUpdate');
+          final pos = _ffi.getPosition(handle);
+          if (_debugPos) debugPrint('[tunes4r] event: pos currentMs=${pos.currentMs} totalMs=${pos.totalMs}');
+          seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
+          positionCtrl.add(pos);
+          // Sync state too — STATE_CHANGED is lost when Rust fires
+          // both events in the same monitor tick (single packed slot).
+          final s = _ffi.getState(handle);
+          seekClock.setPlaying(s == 2);
+          stateCtrl.add(PlaybackState.fromValue(s));
         case EngineEventType.seekStarted:
         case EngineEventType.seekCompleted:
         case EngineEventType.endOfStream:
@@ -164,15 +271,24 @@ class AudioEngine {
     }
   }
 
-  /// Stop event callback.
   void _stopEvents() {
+    // Push state before clearing — the event timer is about to be cancelled
+    // so no more STATE_CHANGED events from Rust will be processed.
+    stateCtrl.add(PlaybackState.stopped);
     _active = false;
-    if (_eventCallbackTarget == this) {
-      _eventCallbackTarget = null;
+    seekClock.reset();
+    _gLastPackedEvent = 0;
+    _eventTimer?.cancel();
+    _eventTimer = null;
+    final h = _handle;
+    if (h != null) {
+      _ffi.setEventCallback(
+        h,
+        Pointer<NativeFunction<Void Function(Int32, Int64)>>.fromAddress(0),
+      );
     }
   }
 
-  /// Release stream controllers.
   void _closeStreams() {
     stateCtrl.close();
     positionCtrl.close();
@@ -184,45 +300,56 @@ class AudioEngine {
   // Playback control
   // ---------------------------------------------------------------------------
 
-  /// Play a URI. Auto-detects source type (file, HTTP stream, YouTube).
-  /// Returns 0 on success, non-zero on failure.
-  ///
-  /// [bufferSizeMs] — optional fixed ring buffer capacity in ms.
-  /// When unset (or <= 0), the buffer is adaptively sized based on
-  /// connection speed. Larger values allow wider seek range for
-  /// progressive streams but use more memory.
   int play(String uri, {int bufferSizeMs = -1}) {
     _startEvents();
     final result = _ffi.play(_h, uri, bufferSizeMs: bufferSizeMs);
-    positionCtrl.add(_ffi.getPosition(_h));
+    _syncPositionAfterPlay();
     return result;
   }
 
-  /// Play a YouTube video by video ID. Resolves the CDN URL on a
-  /// background thread — no auto-detection needed.
+  void _syncPositionAfterPlay() {
+    _syncPositionAfterPlayImpl(0);
+  }
+
+  void _syncPositionAfterPlayImpl(int depth) {
+    if (_disposed || _handle == null) return;
+    if (depth > 10) return; // 10 * 50ms = 500ms max
+    final pos = _ffi.getPosition(_handle!);
+    debugPrint('[tunes4r] syncPos depth=$depth currentMs=${pos.currentMs} totalMs=${pos.totalMs}');
+    if (pos.totalMs > 0) {
+      debugPrint('[tunes4r] syncPos SUCCESS — pushing position');
+      seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
+      seekClock.setPlaying(true);
+      positionCtrl.add(pos);
+    } else {
+      Timer(const Duration(milliseconds: 50),
+          () => _syncPositionAfterPlayImpl(depth + 1));
+    }
+  }
+
   int playYoutube(String videoId, {int bufferSizeMs = -1}) {
     _startEvents();
     final result = _ffi.playYoutube(_h, videoId, bufferSizeMs: bufferSizeMs);
-    positionCtrl.add(_ffi.getPosition(_h));
+    _syncPositionAfterPlay();
     return result;
   }
 
-  /// Play an HTTP stream. Deprecated — use [play] instead; it
-  /// auto-detects the source type.
   @Deprecated('Use play() instead — it auto-detects the source type.')
   int playStream(String url) {
     _startEvents();
     final result = _ffi.play(_h, url);
-    positionCtrl.add(_ffi.getPosition(_h));
+    _syncPositionAfterPlay();
     return result;
   }
 
   void pause() {
     _ffi.pause(_h);
+    seekClock.setPlaying(false);
   }
 
   void resume() {
     _ffi.resume(_h);
+    seekClock.setPlaying(true);
   }
 
   void stop() {
@@ -232,7 +359,7 @@ class AudioEngine {
 
   void seek(int positionMs) {
     _ffi.seek(_h, positionMs);
-    positionCtrl.add(_ffi.getPosition(_h));
+    seekClock.onPositionUpdate(positionMs, seekClock.durationMs);
   }
 
   void setVolume(double volume) {
@@ -260,8 +387,6 @@ class AudioEngine {
 
   int get bufferedPositionMs => _ffi.getBufferedPosition(_h);
 
-  /// Snapshot of the current ring buffer (one-shot read; prefer
-  /// [downloadBufferStream] for live updates).
   AdaptiveRingBuffer get downloadBuffer {
     final b = _ffi.getDownloadBuffer(_h);
     return AdaptiveRingBuffer(
@@ -279,11 +404,6 @@ class AudioEngine {
 
   String? get loadError => _ffi.getLoadError(_h);
 
-  // ---------------------------------------------------------------------------
-  // YouTube service
-  // ---------------------------------------------------------------------------
-
-  /// Look up the best audio stream URL for a YouTube video ID.
   String? youtubeGetStreamUrl(String videoId) {
     return _ffi.youtubeGetStreamUrl(videoId);
   }
@@ -292,11 +412,6 @@ class AudioEngine {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  /// Release the native engine handle.
-  ///
-  /// Order is intentional: event callback and stream controllers are stopped
-  /// and closed first, so any final native events during [destroyEngine] have
-  /// nowhere to go — they are harmless because the engine is being torn down.
   void dispose() {
     if (_disposed) return;
     _disposed = true;
