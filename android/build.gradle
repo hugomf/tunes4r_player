@@ -31,14 +31,41 @@ rootProject.allprojects {
 apply plugin: 'com.android.library'
 
 // Auto-build Rust .so libs before assembling.
-// Requires ANDROID_NDK_HOME; skips gracefully if absent so CI doesn't break.
+// The script auto-detects ANDROID_NDK_HOME from the default SDK path.
 def pluginRoot = project.projectDir.parentFile
+def ndkDir = System.env.ANDROID_NDK_HOME ?:
+    "$System.env.HOME/Library/Android/sdk/ndk/28.2.13676358"
+
 task buildRust(type: Exec) {
-    onlyIf { System.env.ANDROID_NDK_HOME != null }
     workingDir = pluginRoot
-    commandLine 'make', 'build-android'
+    environment 'ANDROID_NDK_HOME', ndkDir
+    def buildType = gradle.startParameter.taskNames.any { it.contains('Debug') } ? 'debug' : 'release'
+    commandLine 'make', 'build-android', "BUILD=$buildType"
 }
-preBuild.dependsOn buildRust
+
+// Copy libc++_shared.so from the NDK into each jniLibs ABI directory.
+// The Rust library links against it, so it must be bundled in the APK.
+def cxxTriples = [
+    'arm64-v8a'  : 'aarch64-linux-android',
+    'armeabi-v7a': 'arm-linux-androideabi',
+    'x86_64'     : 'x86_64-linux-android',
+    'x86'        : 'i686-linux-android',
+]
+
+task copyLibCxx(type: Copy) {
+    dependsOn buildRust
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    def ndkCxxRoot = "$ndkDir/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
+    cxxTriples.each { abi, triple ->
+        from("$ndkCxxRoot/$triple") {
+            include 'libc++_shared.so'
+            into abi
+        }
+    }
+    into 'src/main/jniLibs'
+}
+
+preBuild.dependsOn copyLibCxx
 
 android {
     namespace 'com.tunes4r_player.tunes4r_player'

@@ -59,9 +59,9 @@ build_ios() {
   local profile_flag=""
   [ "$profile" = "release" ] && profile_flag="--release"
 
-  cargo rustc --lib --target aarch64-apple-ios --"$profile" --crate-type staticlib
-  cargo rustc --lib --target aarch64-apple-ios-sim --"$profile" --crate-type staticlib
-  cargo rustc --lib --target x86_64-apple-ios --"$profile" --crate-type staticlib
+  cargo rustc --lib --target aarch64-apple-ios $profile_flag --crate-type staticlib
+  cargo rustc --lib --target aarch64-apple-ios-sim $profile_flag --crate-type staticlib
+  cargo rustc --lib --target x86_64-apple-ios $profile_flag --crate-type staticlib
 
   cd "$PLUGIN_DIR"
   mkdir -p ios/Frameworks
@@ -83,10 +83,18 @@ build_ios() {
 
   rm -f "$sim_fat"
 
+  # Copy to the SPM package's Frameworks directory (consumed by SPM plugin
+  # integration — Flutter resolves relative paths from the package symlink).
+  local spm_dir="ios/tunes4r_player/Frameworks"
+  mkdir -p "$spm_dir"
+  tar -C "ios/Frameworks" -cf - libtunes4r.xcframework \
+    | tar -C "$spm_dir" -xf -
+
   # Keep the raw .a as a convenience fallback (device only)
   cp "$device" ios/Frameworks/libtunes4r.a
 
   echo "[iOS] XCFramework created at ios/Frameworks/libtunes4r.xcframework"
+  echo "[iOS] SPM copy at $spm_dir/libtunes4r.xcframework"
   echo "[iOS] Device-only .a at ios/Frameworks/libtunes4r.a"
 }
 
@@ -244,11 +252,6 @@ build_android() {
   local profile_flag=""
   [ "$profile" = "release" ] && profile_flag="--release"
 
-  # Prevent cmake on macOS from leaking -arch arm64 into Android cross-compile.
-  # NDK 28's cmake toolchain doesn't clear this automatically.
-  export CMAKE_OSX_ARCHITECTURES=""
-
-  # Ensure NDK is configured
   if [ -z "${ANDROID_NDK_HOME:-}" ]; then
     if [ -d "$HOME/Library/Android/sdk/ndk" ]; then
       ANDROID_NDK_HOME=$(ls -d "$HOME/Library/Android/sdk/ndk"/*/ | sort -V | tail -1)
@@ -261,66 +264,28 @@ build_android() {
 
   export ANDROID_NDK_HOME
 
-  NDK_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
-  export PATH="$NDK_TOOLCHAIN:$PATH"
-
-  # NDK 28+ dropped unversioned clang symlinks that cc-rs/cmake expect.
-  # Create them on demand: e.g. aarch64-linux-android-clang -> aarch64-linux-android21-clang
-  for f in "$NDK_TOOLCHAIN"/*-linux-android*-clang "$NDK_TOOLCHAIN"/*-linux-android*-clang++; do
-    [ -f "$f" ] || continue
-    base="${f%-clang*}"           # strip -clang or -clang++
-    base="${base%[0-9][0-9]}"    # strip trailing version suffix (e.g. 21)
-    if [ "$base" != "${f%-clang*}" ] && [ ! -f "$base-clang" ] && [ ! -f "$base-clang++" ]; then
-      ln -sf "$(basename "$f")" "$base-${f##*-}" 2>/dev/null || true
-    fi
-  done
-
-  # Set CC/CXX for cross-compilation
-  export CC_aarch64_linux_android="aarch64-linux-android21-clang"
-  export CC_armv7_linux_androideabi="armv7a-linux-androideabi21-clang"
-  export CC_x86_64_linux_android="x86_64-linux-android21-clang"
-  export CC_i686_linux_android="i686-linux-android21-clang"
-
   cd "$RUST_DIR"
-  for target in aarch64-linux-android armv7-linux-androideabi \
-                x86_64-linux-android i686-linux-android; do
-    echo "  Building for $target..."
-    cargo build --target "$target" $profile_flag || echo "  [WARN] $target failed"
-  done
+  cargo ndk \
+    -t arm64-v8a \
+    -t armeabi-v7a \
+    -t x86_64 \
+    -t x86 \
+    -o "$PLUGIN_DIR/android/src/main/jniLibs" \
+    build --lib \
+    $profile_flag
   cd "$PLUGIN_DIR"
 
-  declare -A ABI_MAP
-  ABI_MAP[aarch64-linux-android]="arm64-v8a"
-  ABI_MAP[armv7-linux-androideabi]="armeabi-v7a"
-  ABI_MAP[x86_64-linux-android]="x86_64"
-  ABI_MAP[i686-linux-android]="x86"
+  # Copy libc++_shared.so from the NDK into each ABI directory.
+  # The Rust library links against it (via build.rs or .cargo/config.toml),
+  # so it must be bundled in the APK alongside libtunes4r.so.
+  local ndk_cxx="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
+  local jni="$PLUGIN_DIR/android/src/main/jniLibs"
+  cp "$ndk_cxx/aarch64-linux-android/libc++_shared.so" "$jni/arm64-v8a/libc++_shared.so"
+  cp "$ndk_cxx/arm-linux-androideabi/libc++_shared.so"   "$jni/armeabi-v7a/libc++_shared.so"
+  cp "$ndk_cxx/x86_64-linux-android/libc++_shared.so"    "$jni/x86_64/libc++_shared.so"
+  cp "$ndk_cxx/i686-linux-android/libc++_shared.so"      "$jni/x86/libc++_shared.so"
+  echo "[Android] libc++_shared.so copied."
 
-  for target in "${!ABI_MAP[@]}"; do
-    abi="${ABI_MAP[$target]}"
-    mkdir -p "android/src/main/jniLibs/$abi"
-    src="$RUST_DIR/target/$target/$profile/libtunes4r.so"
-    if [ -f "$src" ]; then
-      cp "$src" "android/src/main/jniLibs/$abi/"
-      echo "[Android] Copied to android/src/main/jniLibs/$abi/libtunes4r.so"
-    fi
-  done
-
-  # Also bundle libc++_shared.so from NDK
-  NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
-  for target in aarch64-linux-android arm-linux-androideabi \
-                x86_64-linux-android i686-linux-android; do
-    local_dir=""
-    case "$target" in
-      aarch64-linux-android)  local_dir="arm64-v8a" ;;
-      arm-linux-androideabi)  local_dir="armeabi-v7a" ;;
-      x86_64-linux-android)  local_dir="x86_64" ;;
-      i686-linux-android)    local_dir="x86" ;;
-    esac
-    cxx="$NDK_SYSROOT/$target/libc++_shared.so"
-    if [ -f "$cxx" ]; then
-      cp "$cxx" "android/src/main/jniLibs/$local_dir/" 2>/dev/null || true
-    fi
-  done
   echo "[Android] Done."
 }
 

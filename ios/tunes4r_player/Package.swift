@@ -22,7 +22,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "tunes4r_player",
-            path: "libtunes4r.xcframework"
+            path: "Frameworks/libtunes4r.xcframework"
         )
     ]
 )
