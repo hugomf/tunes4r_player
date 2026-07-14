@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 
 import 'models.dart';
@@ -366,6 +368,28 @@ class AudioEngine {
     _ffi.setVolume(_h, volume.clamp(0.0, 1.0));
   }
 
+  void setEqBand(int band, double gainDb) {
+    _ffi.setEqBand(_h, band, gainDb);
+  }
+
+  void setBassEnhancement(bool enabled, double intensity) {
+    _ffi.setBassEnhancement(_h, enabled, intensity.clamp(0.0, 1.0));
+  }
+
+  void setPreGain(double gainDb) {
+    _ffi.setPreGain(_h, gainDb);
+  }
+
+  double getPreGain() {
+    final p = calloc<Float>();
+    try {
+      _ffi.getPreGain(_h, p);
+      return p.value;
+    } finally {
+      calloc.free(p);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // State queries
   // ---------------------------------------------------------------------------
@@ -407,6 +431,41 @@ class AudioEngine {
   String? youtubeGetStreamUrl(String videoId) {
     return _ffi.youtubeGetStreamUrl(videoId);
   }
+
+  String? identifySong(Int16List pcm, int sampleRate) {
+    final pcmPtr = calloc<Int16>(pcm.length);
+    pcmPtr.asTypedList(pcm.length).setAll(0, pcm);
+    final result = _ffi.identifySong(pcmPtr, pcm.length, sampleRate);
+    calloc.free(pcmPtr);
+    return result;
+  }
+
+  /// Record audio from microphone and identify the song in one call.
+  /// Start recording from microphone in background (non-blocking).
+  /// Returns 0 on success. Poll with [pollRecording].
+  int startRecording(int durationMs) => _ffi.startRecording(durationMs);
+
+  /// Poll for recording result. Returns null while recording, JSON when done.
+  String? pollRecording() => _ffi.pollRecording();
+
+  /// Generate fingerid hashes from raw PCM audio.
+  /// Returns a JSON string (array of {hash, timeOffset, peakEnergy}) or null.
+  String? fingeridHashes(Int16List pcm, int sampleRate) {
+    final pcmPtr = calloc<Int16>(pcm.length);
+    pcmPtr.asTypedList(pcm.length).setAll(0, pcm);
+    final result = _ffi.fingeridHashes(pcmPtr, pcm.length, sampleRate);
+    calloc.free(pcmPtr);
+    return result;
+  }
+
+  /// Get fingerprint from the current decode pipeline buffer.
+  String? getFingerprint() => _ffi.getFingerprint(_handle!);
+
+  /// Get fingerid hashes from the current decode pipeline buffer.
+  /// Returns a JSON array of `{hash, timeOffset, peakEnergy}` objects
+  /// suitable for querying a catalog-recognizer service.
+  /// Returns null if nothing is playing or buffer is empty.
+  String? getFingerprintHashes() => _ffi.getFingeridHashes(_handle!);
 
   // ---------------------------------------------------------------------------
   // Lifecycle

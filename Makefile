@@ -11,23 +11,24 @@
 # Use BUILD=debug for debug builds (default: release).
 
 BUILD ?= release
+FEATURES ?= fingerprint
 
 .PHONY: install build-macos build-ios build-android build-all prepare
 
 install:
-	./scripts/build_rust.sh install
+	FEATURES=$(FEATURES) ./scripts/build_rust.sh install
 
 build-macos:
-	./scripts/build_rust.sh macos $(BUILD)
+	FEATURES=$(FEATURES) ./scripts/build_rust.sh macos $(BUILD)
 
 build-ios:
-	./scripts/build_rust.sh ios $(BUILD)
+	FEATURES=$(FEATURES) ./scripts/build_rust.sh ios $(BUILD)
 
 build-android:
-	./scripts/build_rust.sh android $(BUILD)
+	FEATURES=$(FEATURES) ABI=$(ABI) ./scripts/build_rust.sh android $(BUILD)
 
 build-all:
-	./scripts/build_rust.sh all $(BUILD)
+	FEATURES=$(FEATURES) ./scripts/build_rust.sh all $(BUILD)
 
 # Full prepare: compile Rust and copy artifacts into plugin directories
 prepare: build-all

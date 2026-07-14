@@ -33,13 +33,19 @@ fi
 
 BUILD_TYPE="${2:-release}"
 PLATFORM="${1:-all}"
+FEATURES="${FEATURES:-}"
 
 echo "=== tunes4r Rust Build ==="
 echo "  Plugin dir: $PLUGIN_DIR"
 echo "  Rust dir:   $RUST_DIR"
 echo "  Platform:   $PLATFORM"
 echo "  Build:      $BUILD_TYPE"
+echo "  Features:   $FEATURES"
 echo ""
+
+features_flag() {
+  if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; else echo ""; fi
+}
 
 install_targets() {
   echo "[install] Adding rustup targets..."
@@ -57,11 +63,13 @@ build_ios() {
   local profile="release"
   [ "$BUILD_TYPE" = "debug" ] && profile="debug"
   local profile_flag=""
+  local feat_flag
+  feat_flag=$(features_flag)
   [ "$profile" = "release" ] && profile_flag="--release"
 
-  cargo rustc --lib --target aarch64-apple-ios $profile_flag --crate-type staticlib
-  cargo rustc --lib --target aarch64-apple-ios-sim $profile_flag --crate-type staticlib
-  cargo rustc --lib --target x86_64-apple-ios $profile_flag --crate-type staticlib
+  cargo rustc --lib --target aarch64-apple-ios $profile_flag $feat_flag --crate-type staticlib
+  cargo rustc --lib --target aarch64-apple-ios-sim $profile_flag $feat_flag --crate-type staticlib
+  cargo rustc --lib --target x86_64-apple-ios $profile_flag $feat_flag --crate-type staticlib
 
   cd "$PLUGIN_DIR"
   mkdir -p ios/Frameworks
@@ -110,9 +118,12 @@ build_macos() {
   # (arm64 for Apple Silicon, x86_64 for Intel).
   rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null 2>&1 || true
 
+  local feat_flag
+  feat_flag=$(features_flag)
+
   cd "$RUST_DIR"
-  cargo build --target aarch64-apple-darwin $profile_flag
-  cargo build --target x86_64-apple-darwin  $profile_flag
+  cargo build --target aarch64-apple-darwin $profile_flag $feat_flag
+  cargo build --target x86_64-apple-darwin  $profile_flag $feat_flag
   cd "$PLUGIN_DIR"
 
   local arm_lib="$RUST_DIR/target/aarch64-apple-darwin/$profile/libtunes4r.dylib"
@@ -252,6 +263,9 @@ build_android() {
   local profile_flag=""
   [ "$profile" = "release" ] && profile_flag="--release"
 
+  local feat_flag
+  feat_flag=$(features_flag)
+
   if [ -z "${ANDROID_NDK_HOME:-}" ]; then
     if [ -d "$HOME/Library/Android/sdk/ndk" ]; then
       ANDROID_NDK_HOME=$(ls -d "$HOME/Library/Android/sdk/ndk"/*/ | sort -V | tail -1)
@@ -265,25 +279,29 @@ build_android() {
   export ANDROID_NDK_HOME
 
   cd "$RUST_DIR"
+  local abi_list="${ABI:-arm64-v8a}"
+  local ndk_targets=""
+  for t in $abi_list; do ndk_targets="$ndk_targets -t $t"; done
   cargo ndk \
-    -t arm64-v8a \
-    -t armeabi-v7a \
-    -t x86_64 \
-    -t x86 \
+    $ndk_targets \
     -o "$PLUGIN_DIR/android/src/main/jniLibs" \
     build --lib \
-    $profile_flag
+    $profile_flag $feat_flag
   cd "$PLUGIN_DIR"
 
   # Copy libc++_shared.so from the NDK into each ABI directory.
-  # The Rust library links against it (via build.rs or .cargo/config.toml),
-  # so it must be bundled in the APK alongside libtunes4r.so.
   local ndk_cxx="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
   local jni="$PLUGIN_DIR/android/src/main/jniLibs"
-  cp "$ndk_cxx/aarch64-linux-android/libc++_shared.so" "$jni/arm64-v8a/libc++_shared.so"
-  cp "$ndk_cxx/arm-linux-androideabi/libc++_shared.so"   "$jni/armeabi-v7a/libc++_shared.so"
-  cp "$ndk_cxx/x86_64-linux-android/libc++_shared.so"    "$jni/x86_64/libc++_shared.so"
-  cp "$ndk_cxx/i686-linux-android/libc++_shared.so"      "$jni/x86/libc++_shared.so"
+  for target in $abi_list; do
+    case "$target" in
+      arm64-v8a)       abi_dir="arm64-v8a";   ndk_abi="aarch64-linux-android" ;;
+      armeabi-v7a)     abi_dir="armeabi-v7a"; ndk_abi="arm-linux-androideabi" ;;
+      x86_64)          abi_dir="x86_64";      ndk_abi="x86_64-linux-android" ;;
+      x86)             abi_dir="x86";         ndk_abi="i686-linux-android" ;;
+      *)               echo "Unknown ABI target: $target"; exit 1 ;;
+    esac
+    cp "$ndk_cxx/$ndk_abi/libc++_shared.so" "$jni/$abi_dir/libc++_shared.so"
+  done
   echo "[Android] libc++_shared.so copied."
 
   echo "[Android] Done."
