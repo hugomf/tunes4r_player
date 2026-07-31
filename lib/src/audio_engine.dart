@@ -476,10 +476,10 @@ class AudioEngine {
     _disposed = true;
     _stopEvents();
     _closeStreams();
-    _eventCallback.close();
     if (_handle != null) {
       _ffi.destroyEngine(_handle!);
       _handle = null;
     }
+    _eventCallback.close();
   }
 }
