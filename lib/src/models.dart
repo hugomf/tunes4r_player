@@ -7,12 +7,14 @@
 /// | 2     | Playing         |
 /// | 3     | Paused          |
 /// | 4     | Finished        |
+/// | 5     | Error           |
 enum PlaybackState {
   stopped(0),
   connecting(1),
   playing(2),
   paused(3),
-  finished(4);
+  finished(4),
+  error(5);
 
   final int value;
   const PlaybackState(this.value);
@@ -88,7 +90,8 @@ enum EngineEventType {
   positionReset(5),
   error(6),
   seekQueued(7),
-  positionUpdate(8);
+  positionUpdate(8),
+  loadFailed(10);
 
   final int value;
   const EngineEventType(this.value);

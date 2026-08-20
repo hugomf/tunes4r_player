@@ -180,6 +180,11 @@ class AudioEngine {
   int _lastPolledPosMs = 0;
   int _lastPolledDurMs = 0;
   int _lastPolledState = -1;
+  bool _engineError = false;
+
+  /// Error message captured from the LOAD_FAILED event. Read by consumers
+  /// (e.g. the app layer) to surface stream-resolution failures.
+  String? lastLoadError;
 
   void _startEvents() {
     if (_active) return;
@@ -223,7 +228,9 @@ class AudioEngine {
       seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
       seekClock.setPlaying(st == 2);
       positionCtrl.add(pos);
-      stateCtrl.add(PlaybackState.fromValue(st));
+      if (!_engineError) {
+        stateCtrl.add(PlaybackState.fromValue(st));
+      }
       if (st == 4) {
         debugPrint('[tunes4r] poll: Finished — stopping event timer');
         _active = false;
@@ -259,6 +266,12 @@ class AudioEngine {
           final s = _ffi.getState(handle);
           seekClock.setPlaying(s == 2);
           stateCtrl.add(PlaybackState.fromValue(s));
+        case EngineEventType.loadFailed:
+          if (_debugPos) debugPrint('[tunes4r] event: loadFailed');
+          _engineError = true;
+          lastLoadError = loadError;
+          seekClock.setPlaying(false);
+          stateCtrl.add(PlaybackState.error);
         case EngineEventType.seekStarted:
         case EngineEventType.seekCompleted:
         case EngineEventType.endOfStream:
@@ -278,6 +291,8 @@ class AudioEngine {
     // so no more STATE_CHANGED events from Rust will be processed.
     stateCtrl.add(PlaybackState.stopped);
     _active = false;
+    _engineError = false;
+    lastLoadError = null;
     seekClock.reset();
     _gLastPackedEvent = 0;
     _eventTimer?.cancel();
@@ -303,6 +318,8 @@ class AudioEngine {
   // ---------------------------------------------------------------------------
 
   int play(String uri, {int bufferSizeMs = -1}) {
+    _engineError = false;
+    lastLoadError = null;
     _startEvents();
     final result = _ffi.play(_h, uri, bufferSizeMs: bufferSizeMs);
     _syncPositionAfterPlay();
@@ -315,6 +332,7 @@ class AudioEngine {
 
   void _syncPositionAfterPlayImpl(int depth) {
     if (_disposed || _handle == null) return;
+    if (_engineError) return; // stream resolution failed — don't force playing state
     if (depth > 10) return; // 10 * 50ms = 500ms max
     final pos = _ffi.getPosition(_handle!);
     debugPrint('[tunes4r] syncPos depth=$depth currentMs=${pos.currentMs} totalMs=${pos.totalMs}');
@@ -330,6 +348,8 @@ class AudioEngine {
   }
 
   int playYoutube(String videoId, {int bufferSizeMs = -1}) {
+    _engineError = false;
+    lastLoadError = null;
     _startEvents();
     final result = _ffi.playYoutube(_h, videoId, bufferSizeMs: bufferSizeMs);
     _syncPositionAfterPlay();
@@ -338,6 +358,8 @@ class AudioEngine {
 
   @Deprecated('Use play() instead — it auto-detects the source type.')
   int playStream(String url) {
+    _engineError = false;
+    lastLoadError = null;
     _startEvents();
     final result = _ffi.play(_h, url);
     _syncPositionAfterPlay();

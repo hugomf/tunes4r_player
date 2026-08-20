@@ -126,8 +126,11 @@ build_macos() {
   cargo build --target x86_64-apple-darwin  $profile_flag $feat_flag
   cd "$PLUGIN_DIR"
 
-  local arm_lib="$RUST_DIR/target/aarch64-apple-darwin/$profile/libtunes4r.dylib"
-  local x86_lib="$RUST_DIR/target/x86_64-apple-darwin/$profile/libtunes4r.dylib"
+  # crates/ffi is a workspace member, so cargo outputs to the workspace
+  # target dir ($RUST_DIR/../../target), not $RUST_DIR/target.
+  local ws_target="$RUST_DIR/../../target"
+  local arm_lib="$ws_target/aarch64-apple-darwin/$profile/libtunes4r.dylib"
+  local x86_lib="$ws_target/x86_64-apple-darwin/$profile/libtunes4r.dylib"
   local out_dir="macos/Frameworks"
 
   if [ ! -f "$arm_lib" ] || [ ! -f "$x86_lib" ]; then

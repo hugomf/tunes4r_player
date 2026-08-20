@@ -140,6 +140,9 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp>
           case EngineEventType.error:
             setState(() => _lastSeekEvent = 'Error: $pos');
             break;
+          case EngineEventType.loadFailed:
+            setState(() => _lastSeekEvent = 'Load failed');
+            break;
           case EngineEventType.positionUpdate:
           case EngineEventType.positionReset:
           case EngineEventType.seekQueued:
@@ -509,6 +512,7 @@ class _StreamStateBadgeState extends State<_StreamStateBadge>
     PlaybackState.playing => Colors.green.shade600,
     PlaybackState.paused => Colors.orange.shade600,
     PlaybackState.finished => Colors.blue.shade600,
+    PlaybackState.error => Colors.red.shade600,
   };
 
   IconData get _icon => switch (widget.state) {
@@ -517,6 +521,7 @@ class _StreamStateBadgeState extends State<_StreamStateBadge>
     PlaybackState.playing => Icons.play_circle_fill,
     PlaybackState.paused => Icons.pause_circle_filled,
     PlaybackState.finished => Icons.check_circle_outline,
+    PlaybackState.error => Icons.error_outline,
   };
 
   @override
