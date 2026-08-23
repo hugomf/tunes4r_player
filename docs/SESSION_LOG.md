@@ -1,5 +1,26 @@
 # Session Log
 
+## 2026-08-23 — Fix macOS build: stale workspace target-dir assumption + ytex warning cleanup
+
+### Summary
+`make build-macos` failed with "missing built dylib(s) for macOS XCFramework". Root cause: `crates/ffi` is `exclude`d from the tunes4r-core root workspace (root Cargo.toml), so cargo outputs to `crates/ffi/target/`, but `build_macos()` resolved dylibs from the old workspace target dir (`$RUST_DIR/../../target`). The iOS function already used `$RUST_DIR/target` correctly — only macOS was stale.
+
+Also fixed 2 warnings in ytex (`botguard_host.rs`) that appeared on Android builds: `generate_integrity_token` import and `POLYFILL` const are only used by the non-Android `run_botguard`, so both now carry matching `#[cfg(not(target_os = "android"))]`.
+
+### Changes
+
+**scripts/build_rust.sh** (tunes4r_player)
+- `build_macos()`: dylib paths changed from `$RUST_DIR/../../target/<arch>/release/` to `$RUST_DIR/target/<arch>/release/`; removed stale "workspace member" comment.
+
+**src/botguard_host.rs** (ytex)
+- Added `#[cfg(not(target_os = "android"))]` to `use crate::botguard::generate_integrity_token;`
+- Added same cfg gate to `const POLYFILL`
+
+### Verification
+- `make build-macos`: ✓ XCFramework (arm64+x86_64) + flat dylib built into macos/Frameworks and SPM dir
+- `cargo check --lib` (ytex, host): ✓ zero warnings
+- `cargo check --target aarch64-linux-android --lib` (ytex, NDK toolchain): ✓ zero warnings
+
 ## 2026-07-06 — Fix seek from VecDeque/ringbuf mismatch: clear_audio_queue was no-op
 
 ### Summary
