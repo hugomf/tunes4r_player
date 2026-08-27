@@ -280,6 +280,10 @@ build_android() {
 
   export ANDROID_NDK_HOME
 
+  # rquickjs-sys bindgen needs NDK sysroot + Android target triple to find headers
+  local ndk_sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+  export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android --sysroot=$ndk_sysroot"
+
   cd "$RUST_DIR"
   local abi_list="${ABI:-arm64-v8a}"
   local ndk_targets=""

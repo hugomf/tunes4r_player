@@ -14,7 +14,9 @@ public class Tunes4rPlayerPlugin implements FlutterPlugin {
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
-        nativeInit(binding.getApplicationContext());
+        Context ctx = binding.getApplicationContext();
+        PoTokenBridge.init(ctx);
+        nativeInit(ctx);
     }
 
     @Override
