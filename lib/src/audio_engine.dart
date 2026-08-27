@@ -8,8 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'models.dart';
 import 'tunes4r_player_ffi.dart';
 
-// HACK: set to true to log position-update diagnostics
-bool _debugPos = true;
+bool _debugPos = false;
 
 // ---------------------------------------------------------------------------
 // Native event bridge
@@ -218,11 +217,11 @@ class AudioEngine {
 
     // 2. Poll cached state/position directly from Rust every tick.
     final handle = _handle;
-    if (handle == null) { debugPrint('[tunes4r] poll: handle is null'); return; }
+    if (handle == null) { if (_debugPos) debugPrint('[tunes4r] poll: handle is null'); return; }
     final pos = _ffi.getPosition(handle);
     final st = _ffi.getState(handle);
     if (pos.currentMs != _lastPolledPosMs || st != _lastPolledState) {
-      debugPrint('[tunes4r] poll: pos=${pos.currentMs}/${pos.totalMs} st=$st — pushing');
+      if (_debugPos) debugPrint('[tunes4r] poll: pos=${pos.currentMs}/${pos.totalMs} st=$st — pushing');
       _lastPolledPosMs = pos.currentMs;
       _lastPolledState = st;
       seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
@@ -232,7 +231,7 @@ class AudioEngine {
         stateCtrl.add(PlaybackState.fromValue(st));
       }
       if (st == 4) {
-        debugPrint('[tunes4r] poll: Finished — stopping event timer');
+        if (_debugPos) debugPrint('[tunes4r] poll: Finished — stopping event timer');
         _active = false;
         _eventTimer?.cancel();
         _eventTimer = null;
@@ -335,9 +334,9 @@ class AudioEngine {
     if (_engineError) return; // stream resolution failed — don't force playing state
     if (depth > 10) return; // 10 * 50ms = 500ms max
     final pos = _ffi.getPosition(_handle!);
-    debugPrint('[tunes4r] syncPos depth=$depth currentMs=${pos.currentMs} totalMs=${pos.totalMs}');
+    if (_debugPos) debugPrint('[tunes4r] syncPos depth=$depth currentMs=${pos.currentMs} totalMs=${pos.totalMs}');
     if (pos.totalMs > 0) {
-      debugPrint('[tunes4r] syncPos SUCCESS — pushing position');
+      if (_debugPos) debugPrint('[tunes4r] syncPos SUCCESS — pushing position');
       seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
       seekClock.setPlaying(true);
       positionCtrl.add(pos);
