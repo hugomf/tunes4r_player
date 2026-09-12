@@ -1,5 +1,51 @@
 # Session Log
 
+## 2026-08-29 — Remove Android Java WebView PoToken shim; pure-Rust minting on all platforms
+
+### Summary
+Deleted the Android-only Java/BotGuard WebView bridge. po_token minting is backend work and lives exclusively in Rust (`ytex::botguard::mint_po_token` via vendored `rustypipe-botguard` 0.1.2 — deno_core/V8 built from source, self-contained, cross-platform incl. Android). Android now follows exactly the same path as macOS: Dart FFI (`DynamicLibrary.open('libtunes4r.so')`) → Rust. No Java frontend code participates in token minting.
+
+### Changes (tunes4r_player repo)
+- Deleted `android/src/main/java/com/tunes4r_player/tunes4r_player/PoTokenBridge.java` (hidden-WebView shim: loaded `bundle.cjs`, ran `BG.BotGuardClient.create` + `WebPoMinter.mintAsWebsafeString` via `evaluateJavascript`, `runBg`/`mint` with CountDownLatch timeouts).
+- Deleted `android/src/main/java/com/tunes4r_player/tunes4r_player/Tunes4rPlayerPlugin.java` (FlutterPlugin that called `PoTokenBridge.init` + JNI `nativeInit`).
+- Deleted `android/src/main/assets/bundle.cjs` (BotGuard JS bundle, needed only by the shim).
+- Removed now-empty `android/src/main/java/**` dir tree and `android/src/main/assets/`.
+- **pubspec.yaml** — Android platform entry trimmed to `ffiPlugin: true` only (dropped `pluginClass: Tunes4rPlayerPlugin` + `package: com.tunes4r_player.tunes4r_player`), matching the existing macos/ios `ffiPlugin` entries.
+- Deleted stale auto-generated `example/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java` (would have referenced the deleted plugin class; Flutter regenerates it on next build).
+- No Java/Kotlin files remain anywhere under the plugin source tree (verified `find` + `rg -li potoken/...`).
+
+### Verification
+- `find`/`rg` across tunes4r_player: 0 `.java`/`.kt` files, 0 references to PoToken/PoTokenBridge/botguard/WebView/bundle.cjs.
+- tunes4r-core: only a harmless doc comment mentions PoToken (`crates/ffi/src/ffi.rs:749`, describing the full-length ANDROID+PoToken YouTube path) — not code.
+- `android/src/main/jniLibs` intact: `arm64-v8a/{libtunes4r.so, libc++_shared.so}`, `x86_64/{libtunes4r.so, libc++_shared.so}`.
+
+### Notes / follow-ups
+- `ffi.rs` JNI exports `Java_com_tunes4r_1player_tunes4r_1player_Tunes4rPlayerPlugin_nativeInit` (~L166, does rustls-platform-verifier + ndk_context init) and `Java_com_ocelot_tunes4r_MainActivity_initRustlsPlatformVerifier` (~L211) are now only callable if a host activity invokes them — nothing in the Android app does today. Android TLS (rustls-platform-verifier) previously relied on `nativeInit` being called by the deleted Java plugin; if requests fail TLS verification on device, wire the existing JNI export into the example app's `MainActivity.kt` (one line, no WebView, no po_token Java).
+- Rebuild APK + re-test on Pixel_API_34 emulator not yet run after the deletion.
+
+## 2026-08-29 — Android: wire libtunes4r.so into jniLibs for arm64-v8a + x86_64
+
+### Summary
+Plugin Android build now produces and packages the Rust cdylib for the two 64-bit ABIs, using the same build recipe that fixed the tunes4r-core V8/OpenSSL link saga (platform-26 bionic libc, per-ABI static OpenSSL, NDK compiler-rt builtins). Dropped 32-bit ABIs (armeabi-v7a, x86) — devices are vanishing and Play requires 64-bit; V8 cannot cross-compile 32-bit targets from macOS anyway (needs i386 host binaries).
+
+### Changes
+- **scripts/build_rust.sh** — `build_android()`:
+  - Default `abi_list="${ABI:-arm64-v8a x86_64}"` (was single `arm64-v8a`).
+  - Exports `CARGO_NDK_PLATFORM=26` (link against api-26 bionic libc stub — v8 objects compiled with `--target=<triple>26` reference `stderr`, `strtof_l`, `__fwrite_chk`, etc. missing from api-21) and `OPENSSL_STATIC=1`.
+  - Loops per-ABI: each `cargo ndk -t <target> -o "$jni" build --lib` runs with its own `OPENSSL_DIR` (arm64-v8a → `$RUST_DIR/../../target/openssl-android/install`, x86_64 → `$RUST_DIR/../../target/openssl-android-x86_64/install`) via `env "${env_args[@]}" cargo ndk ...` — a single cargo-ndk invocation can't serve both ABIs with one OPENSSL_DIR.
+  - libc++_shared.so copy loop now covers only the 2 ABIs.
+- **android/build.gradle** — `cxxTriples` + header comment trimmed to arm64-v8a + x86_64 only (removed armeabi-v7a/x86 so copyLibCxx stops staging c++_shared for dead ABIs).
+- Removed stale `android/src/main/jniLibs/{armeabi-v7a,x86}/` (held only old libc++_shared.so).
+- **v8-android-patched/build.rs** (tunes4r-core) — new `stage_android_builtins(clang_base_path, target_arch)` called on both system-clang and downloaded-clang paths when target_os=="android": locates `libclang_rt.builtins-<arch>-android.a` under `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/lib/clang/*/lib/linux` and copies it into `clang_base_path/lib/clang/<ver>/lib/linux/`. Replaces the earlier manual staging step (Chromium clang-20 download omits android builtins; ninja `//build/config/clang:compiler_builtins` needs the file present).
+
+### Verification
+- `./scripts/build_rust.sh android release` → EXIT=0, both ABIs built ("Building arm64-v8a", "Building x86_64").
+- `android/src/main/jniLibs/arm64-v8a/{libtunes4r.so 61.0M, libc++_shared.so 8.8M}`, `x86_64/{libtunes4r.so 65.9M, libc++_shared.so 8.4M}`.
+- tunes4r-core: arm64 (61.4M) + x86_64 (65.9M) `libtunes4r.so` both ELF 64-bit LSB, DT_NEEDED = `libc++_shared.so, liblog.so, libOpenSLES.so, libdl.so, libm.so, libc.so`.
+
+### Not done
+- First clean (uncached) gradle build still untested; gradle forces `ANDROID_NDK_HOME=$HOME/.../ndk/28.2.13676358` when env unset while the openssl installs/V8-builtins verification used NDK 27 — a future clean build may need NDK-version alignment before the APK assembles.
+
 ## 2026-08-23 — Fix macOS build: stale workspace target-dir assumption + ytex warning cleanup
 
 ### Summary

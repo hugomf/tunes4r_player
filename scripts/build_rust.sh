@@ -44,7 +44,16 @@ echo "  Features:   $FEATURES"
 echo ""
 
 features_flag() {
-  if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; else echo ""; fi
+  if [ -n "$FEATURES" ]; then
+    # Join space-separated features with commas so cargo receives a single
+    # --features value (e.g. "fingerprint,botguard"), which parses correctly
+    # both quoted and unquoted.
+    local joined
+    joined=$(echo "$FEATURES" | tr ' ' ',')
+    echo "--features $joined"
+  else
+    echo ""
+  fi
 }
 
 install_targets() {
@@ -284,20 +293,43 @@ build_android() {
   local ndk_sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
   export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android --sysroot=$ndk_sysroot"
 
+  # Link against bionic API level 26 stubs. V8 objects compile with
+  # --target=<triple>26 and reference symbols (stderr, strtof_l, __fwrite_chk,
+  # ...) that only the api-26 libc stub exports; cargo-ndk's default (21)
+  # produces undefined symbols at link time.
+  export CARGO_NDK_PLATFORM=26
+  export OPENSSL_STATIC=1
+
   cd "$RUST_DIR"
+  # Default to arm64-v8a only. The emulator and all modern devices are arm64,
+  # and the x86_64 pass previously pulled in the heavy `v8` compile. Pass
+  # ABI="arm64-v8a x86_64" explicitly (e.g. for publishing) when you need it.
   local abi_list="${ABI:-arm64-v8a}"
-  local ndk_targets=""
-  for t in $abi_list; do ndk_targets="$ndk_targets -t $t"; done
-  cargo ndk \
-    $ndk_targets \
-    -o "$PLUGIN_DIR/android/src/main/jniLibs" \
-    build --lib \
-    $profile_flag $feat_flag
+  local jni="$PLUGIN_DIR/android/src/main/jniLibs"
+
+  # OpenSSL is built per ABI into separate install dirs; each ABI's cargo ndk
+  # run must see its own OPENSSL_DIR (a single invocation can't serve both).
+  for target in $abi_list; do
+    case "$target" in
+      arm64-v8a)     openssl_dir="../../target/openssl-android/install" ;;
+      armeabi-v7a)   openssl_dir="" ;;
+      x86_64)        openssl_dir="../../target/openssl-android-x86_64/install" ;;
+      x86)           openssl_dir="" ;;
+      *)             echo "Unknown ABI target: $target"; exit 1 ;;
+    esac
+
+    local env_args=()
+    [ -n "$openssl_dir" ] && [ -d "$openssl_dir" ] && env_args+=("OPENSSL_DIR=$PWD/$openssl_dir")
+    env "${env_args[@]}" cargo ndk \
+      -t "$target" \
+      -o "$jni" \
+      build --lib \
+      $profile_flag $feat_flag
+  done
   cd "$PLUGIN_DIR"
 
   # Copy libc++_shared.so from the NDK into each ABI directory.
   local ndk_cxx="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
-  local jni="$PLUGIN_DIR/android/src/main/jniLibs"
   for target in $abi_list; do
     case "$target" in
       arm64-v8a)       abi_dir="arm64-v8a";   ndk_abi="aarch64-linux-android" ;;

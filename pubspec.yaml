@@ -30,5 +30,3 @@ flutter:
         swift_package_manager: true
       android:
         ffiPlugin: true
-        package: com.tunes4r_player.tunes4r_player
-        pluginClass: Tunes4rPlayerPlugin

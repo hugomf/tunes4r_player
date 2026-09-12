@@ -1,9 +1,13 @@
 # tunes4r — Project Context
 
 ## Architecture
-- Rust native library (`rust/`) with C FFI, wrapped by Dart FFI bindings (`lib/src/tunes4r_player_ffi.dart`)
+- Backend is **Rust** (workspace root `tunes4r-core`: `crates/ffi`, `crates/player`, `crates/youtube`; `crates/ytex` module pull via FFI). Frontend is **Dart/Java** and contains no backend logic.
+- Rust native library (`libtunes4r.so` / `libtunes4r.dylib` / `libtunes4r.a`), wrapped by Dart FFI bindings (`lib/src/tunes4r_player_ffi.dart`)
 - High-level Dart API: `AudioEngine` class (`lib/src/audio_engine.dart`)
-- YouTube stream extraction: `rust/crates/youtube/`
+- YouTube stream extraction / po_token minting: pure Rust in `tunes4r-core`/`ytex` (`ytex::botguard::mint_po_token` via vendored rustypipe-botguard/deno_core-V8) — **same code path on macOS, iOS, and Android**; no Java/WebView bridge
+- Android hooks the native lib via Dart `DynamicLibrary.open('libtunes4r.so')` (pubspec `android: ffiPlugin: true`, no pluginClass)
+- Android native lib + libc++_shared.so live in `android/src/main/jniLibs/{arm64-v8a,x86_64}`; built by `scripts/build_rust.sh android` (see SESSION_LOG for the platform-26/OpenSSL/builtins recipe)
+- 32-bit ABIs (armeabi-v7a, x86) are NOT built: V8 cannot cross-compile them from macOS; Play requires 64-bit
 
 ## Key Design Patterns
 - `AudioEngine._h` getter replaces `_ensureAlive()` + `_handle!` boilerplate (single chokepoint for disposed checks)

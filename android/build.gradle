@@ -2,9 +2,7 @@
 //
 // Rust .so files should be placed in:
 //   src/main/jniLibs/arm64-v8a/libtunes4r.so
-//   src/main/jniLibs/armeabi-v7a/libtunes4r.so
 //   src/main/jniLibs/x86_64/libtunes4r.so
-//   src/main/jniLibs/x86/libtunes4r.so
 //
 // Build with: make build-android
 
@@ -30,30 +28,28 @@ rootProject.allprojects {
 
 apply plugin: 'com.android.library'
 
-// Auto-build Rust .so libs before assembling.
-// The script auto-detects ANDROID_NDK_HOME from the default SDK path.
-def pluginRoot = project.projectDir.parentFile
+// Auto-detect ANDROID_NDK_HOME from the default SDK path.
 def ndkDir = System.env.ANDROID_NDK_HOME ?:
     "$System.env.HOME/Library/Android/sdk/ndk/28.2.13676358"
 
-task buildRust(type: Exec) {
-    workingDir = pluginRoot
-    environment 'ANDROID_NDK_HOME', ndkDir
-    def buildType = gradle.startParameter.taskNames.any { it.contains('Debug') } ? 'debug' : 'release'
-    commandLine 'make', 'build-android', "BUILD=$buildType"
-}
+// NOTE: The Rust .so is built by Flutter's FFI plugin native-assets hook
+// (driven from tunes4r_player via `make build-android` with the correct
+// target ABI). Running it again here via `preBuild` causes a SECOND full
+// Rust build — including the x86_64 pass that compiles the heavy `v8` crate —
+// on every `flutter run` / `flutter build`. That made debug builds take ~30min.
+//
+// We only copy libc++_shared.so here. The .so itself is produced by the FFI
+// hook. For explicit multi-ABI publishing builds, run `make build-android`
+// manually (which also copies libc++_shared.so).
 
 // Copy libc++_shared.so from the NDK into each jniLibs ABI directory.
 // The Rust library links against it, so it must be bundled in the APK.
 def cxxTriples = [
-    'arm64-v8a'  : 'aarch64-linux-android',
-    'armeabi-v7a': 'arm-linux-androideabi',
-    'x86_64'     : 'x86_64-linux-android',
-    'x86'        : 'i686-linux-android',
+    'arm64-v8a': 'aarch64-linux-android',
+    'x86_64'    : 'x86_64-linux-android',
 ]
 
 task copyLibCxx(type: Copy) {
-    dependsOn buildRust
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     def ndkCxxRoot = "$ndkDir/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib"
     cxxTriples.each { abi, triple ->
@@ -65,7 +61,9 @@ task copyLibCxx(type: Copy) {
     into 'src/main/jniLibs'
 }
 
-preBuild.dependsOn copyLibCxx
+// Keep copyLibCxx available on demand, but do NOT block preBuild on a Rust
+// rebuild. `flutter` already builds the native lib via the FFI hook.
+// Run `./gradlew copyLibCxx` manually if the NDK .so needs refreshing.
 
 android {
     namespace 'com.tunes4r_player.tunes4r_player'

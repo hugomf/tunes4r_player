@@ -1,0 +1,1534 @@
+=== tunes4r Rust Build ===
+  Plugin dir: /Users/hugo/Projects/tunes4r_player
+  Rust dir:   /Users/hugo/Projects/tunes4r-core/crates/ffi
+  Platform:   android
+  Build:      release
+  Features:   
+
+=== Building for Android ===
+    Building arm64-v8a (aarch64-linux-android)
+warning: patch `rquickjs-sys v0.12.0 (/Users/hugo/Projects/tunes4r-core/rquickjs-sys-patched)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling cfg-if v1.0.4
+   Compiling smallvec v1.15.2
+   Compiling log v0.4.33
+   Compiling memchr v2.8.2
+   Compiling bitflags v2.13.0
+   Compiling pin-project-lite v0.2.17
+   Compiling libc v0.2.186
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling once_cell v1.21.4
+   Compiling scopeguard v1.2.0
+   Compiling num-traits v0.2.19
+   Compiling parking_lot_core v0.9.12
+   Compiling stable_deref_trait v1.2.1
+   Compiling zerofrom v0.1.8
+   Compiling futures-core v0.3.32
+   Compiling itoa v1.0.18
+   Compiling futures-sink v0.3.32
+   Compiling writeable v0.6.3
+   Compiling litemap v0.8.2
+   Compiling lock_api v0.4.14
+   Compiling yoke v0.8.3
+   Compiling slab v0.4.12
+   Compiling utf8_iter v1.0.4
+   Compiling percent-encoding v2.3.2
+   Compiling icu_normalizer_data v2.2.0
+   Compiling futures-channel v0.3.32
+   Compiling icu_properties_data v2.2.0
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling futures-task v0.3.32
+   Compiling futures-io v0.3.32
+   Compiling strength_reduce v0.2.4
+   Compiling form_urlencoded v1.2.2
+   Compiling lazy_static v1.5.0
+   Compiling getrandom v0.4.3
+   Compiling zmij v1.0.21
+   Compiling tracing-core v0.1.36
+   Compiling rand_core v0.10.1
+   Compiling typenum v1.20.1
+   Compiling rand_core v0.6.4
+   Compiling serde_json v1.0.150
+   Compiling futures-util v0.3.32
+   Compiling bytemuck v1.25.0
+   Compiling thiserror v2.0.18
+   Compiling zeroize v1.9.0
+   Compiling rand v0.8.8
+   Compiling bindgen v0.70.1
+   Compiling aws-lc-sys v0.42.0
+   Compiling aho-corasick v1.1.4
+   Compiling crc32fast v1.5.0
+   Compiling simd-adler32 v0.3.9
+   Compiling adler2 v2.0.1
+   Compiling regex-syntax v0.8.11
+   Compiling miniz_oxide v0.8.9
+   Compiling tracing v0.1.44
+   Compiling errno v0.3.14
+   Compiling mio v1.2.1
+   Compiling num-integer v0.1.46
+   Compiling parking_lot v0.12.5
+   Compiling signal-hook-registry v1.4.8
+   Compiling socket2 v0.6.4
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling icu_locale_core v2.2.0
+   Compiling indexmap v2.14.0
+   Compiling icu_collections v2.2.0
+   Compiling primal-check v0.3.4
+   Compiling transpose v0.2.3
+   Compiling num-complex v0.4.6
+   Compiling hybrid-array v0.4.13
+   Compiling num-bigint v0.4.8
+   Compiling rustls-pki-types v1.15.0
+   Compiling rustfft v6.4.1
+   Compiling regex-lite v0.1.9
+   Compiling radium v0.7.0
+   Compiling ring v0.17.14
+   Compiling flate2 v1.1.9
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling tap v1.0.1
+   Compiling outref v0.1.0
+   Compiling cmov v0.5.4
+   Compiling bindgen v0.66.1
+   Compiling simd-abstraction v0.7.1
+   Compiling wyz v0.5.1
+   Compiling icu_provider v2.2.0
+   Compiling ctutils v0.4.2
+   Compiling openssl-sys v0.9.117
+   Compiling icu_normalizer v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling getrandom v0.2.17
+   Compiling funty v2.0.0
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling untrusted v0.9.0
+   Compiling regex-automata v0.4.14
+   Compiling bytes v1.12.0
+   Compiling uuid v1.26.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling futures-executor v0.3.32
+   Compiling url v2.5.8
+   Compiling tokio v1.52.3
+   Compiling futures v0.3.32
+   Compiling http v1.4.2
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling anyhow v1.0.103
+   Compiling debugid v0.8.0
+   Compiling bitvec v1.1.1
+   Compiling httparse v1.10.1
+   Compiling alloc-stdlib v0.2.4
+   Compiling memoffset v0.9.1
+   Compiling http-body v1.0.1
+   Compiling base64-simd v0.7.0
+   Compiling symphonia-core v0.6.0
+   Compiling openssl-probe v0.2.1
+   Compiling try-lock v0.2.5
+   Compiling data-encoding v2.11.1
+   Compiling rustc-hash v1.1.0
+   Compiling tower-service v0.3.3
+   Compiling bit-vec v0.6.3
+   Compiling atomic-waker v1.1.2
+   Compiling if_chain v1.0.3
+   Compiling fnv v1.0.7
+   Compiling unicode-id-start v1.4.0
+   Compiling bit-set v0.5.3
+   Compiling want v0.3.1
+   Compiling pin-project v1.1.13
+   Compiling brotli-decompressor v5.0.3
+   Compiling bincode v1.3.3
+   Compiling inout v0.2.2
+   Compiling cpufeatures v0.3.0
+   Compiling capacity_builder v0.1.3
+   Compiling subtle v2.6.1
+   Compiling cooked-waker v5.0.0
+   Compiling az v1.3.0
+   Compiling static_assertions v1.1.0
+   Compiling byteorder v1.5.0
+   Compiling deno_core_icudata v0.74.0
+   Compiling foreign-types-shared v0.1.1
+   Compiling openssl v0.10.81
+   Compiling cipher v0.5.2
+   Compiling foreign-types v0.3.2
+   Compiling utf8parse v0.2.2
+   Compiling compression-core v0.4.32
+   Compiling ipnet v2.12.0
+   Compiling brotli v8.0.4
+   Compiling v8 v130.0.7 (/Users/hugo/Projects/tunes4r-core/v8-android-patched)
+   Compiling base64 v0.22.1
+   Compiling native-tls v0.2.18
+   Compiling regex v1.12.4
+   Compiling symphonia-metadata v0.6.0
+   Compiling thiserror v1.0.69
+   Compiling anstyle-parse v1.0.0
+   Compiling sourcemap v8.0.1
+   Compiling zerocopy v0.7.35
+   Compiling symphonia-common v0.6.0
+   Compiling grammers-tl-types v0.10.0
+   Compiling http-body-util v0.1.3
+   Compiling hmac v0.13.0
+   Compiling deranged v0.5.8
+   Compiling webpki-roots v1.0.8
+   Compiling android_system_properties v0.1.5
+   Compiling sync_wrapper v1.0.2
+   Compiling rustix v0.38.44
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling unic-common v0.9.0
+   Compiling unic-char-range v0.9.0
+   Compiling linux-raw-sys v0.4.15
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling powerfmt v0.2.0
+   Compiling time-core v0.1.9
+   Compiling tower-layer v0.3.3
+   Compiling num-conv v0.2.2
+   Compiling anstyle-query v1.1.5
+   Compiling cpubits v0.1.1
+   Compiling aes v0.9.1
+   Compiling anstream v1.0.0
+   Compiling libsql-ffi v0.9.30
+   Compiling deno_error v0.5.5
+   Compiling tokio-util v0.7.18
+   Compiling wasm_dep_analyzer v0.2.0
+   Compiling deno_unsync v0.4.4
+   Compiling compression-codecs v0.4.38
+   Compiling h2 v0.4.19
+   Compiling async-compression v0.4.43
+   Compiling time v0.3.53
+   Compiling tower v0.5.3
+   Compiling unic-char-property v0.9.0
+   Compiling unic-ucd-version v0.9.0
+   Compiling sys_traits v0.1.28
+   Compiling pbkdf2 v0.13.0
+   Compiling cookie v0.18.1
+   Compiling ctr v0.10.1
+   Compiling sha2 v0.11.0
+   Compiling sha1 v0.11.0
+   Compiling rustls-native-certs v0.8.4
+   Compiling glass_pumpkin v2.0.0-rc0
+   Compiling home v0.5.12
+   Compiling hex v0.4.3
+   Compiling psl-types v2.0.11
+   Compiling either v1.16.0
+   Compiling mime v0.3.17
+   Compiling termcolor v1.4.1
+   Compiling which v6.0.3
+   Compiling deno_terminal v0.2.3
+   Compiling publicsuffix v2.3.0
+   Compiling serde_with v3.21.0
+   Compiling grammers-crypto v0.10.0
+   Compiling capacity_builder v0.5.0
+   Compiling deno_path_util v0.3.0
+   Compiling tower-http v0.6.11
+   Compiling unic-ucd-ident v0.9.0
+   Compiling tokio-native-tls v0.3.1
+   Compiling encoding_rs v0.8.33
+   Compiling vsimd v0.8.0
+   Compiling ryu v1.0.23
+   Compiling konst_macro_rules v0.2.19
+   Compiling option-ext v0.2.0
+   Compiling fqdn v0.3.12
+   Compiling clap_lex v1.1.0
+   Compiling jiff-core v0.1.0
+   Compiling outref v0.5.2
+   Compiling strsim v0.11.1
+   Compiling simdutf8 v0.1.5
+   Compiling cookie_store v0.22.1
+   Compiling clap_builder v4.6.0
+   Compiling jiff v0.2.35
+   Compiling simd_cesu8 v1.1.1
+   Compiling base64-simd v0.8.0
+   Compiling hyper v1.10.1
+   Compiling konst v0.2.20
+   Compiling dirs-sys v0.5.0
+   Compiling getrandom v0.3.4
+   Compiling serde_urlencoded v0.7.1
+   Compiling jni-sys v0.4.1
+   Compiling urlpattern v0.3.0
+   Compiling jni v0.22.4
+   Compiling mime_guess v2.0.5
+   Compiling os_info v3.15.0
+   Compiling iana-time-zone v0.1.65
+   Compiling env_filter v2.0.0
+   Compiling combine v4.6.7
+   Compiling unicase v2.9.0
+   Compiling locate-locale v0.2.0
+   Compiling crossbeam-utils v0.8.21
+warning: v8@130.0.7: Not using sccache or ccache
+   Compiling oboe-sys v0.6.1
+   Compiling hyper-util v0.1.20
+   Compiling clap v4.6.1
+   Compiling chrono v0.4.45
+   Compiling const_format v0.2.36
+   Compiling env_logger v0.11.11
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:267:24
+    |
+267 |   pub(crate) fn holder(&self) -> Local<Object> {
+    |                        ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                        |
+    |                        the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+267 |   pub(crate) fn holder(&self) -> Local<'_, Object> {
+    |                                        +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:272:28
+    |
+272 |   pub(crate) fn new_target(&self) -> Local<Value> {
+    |                            ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                            |
+    |                            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+272 |   pub(crate) fn new_target(&self) -> Local<'_, Value> {
+    |                                            +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:277:22
+    |
+277 |   pub(crate) fn this(&self) -> Local<Object> {
+    |                      ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                      |
+    |                      the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+277 |   pub(crate) fn this(&self) -> Local<'_, Object> {
+    |                                      +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:282:22
+    |
+282 |   pub(crate) fn data(&self) -> Local<Value> {
+    |                      ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                      |
+    |                      the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+282 |   pub(crate) fn data(&self) -> Local<'_, Value> {
+    |                                      +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:296:21
+    |
+296 |   pub(crate) fn get(&self, index: int) -> Local<Value> {
+    |                     ^^^^^                 ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                     |
+    |                     the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+296 |   pub(crate) fn get(&self, index: int) -> Local<'_, Value> {
+    |                                                 +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:326:39
+    |
+326 |   unsafe fn get_implicit_arg_local<T>(&self, index: i32) -> Local<T> {
+    |                                       ^^^^^                 ^^^^^^^^ the same lifetime is hidden here
+    |                                       |
+    |                                       the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+326 |   unsafe fn get_implicit_arg_local<T>(&self, index: i32) -> Local<'_, T> {
+    |                                                                   +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:334:30
+    |
+334 |   unsafe fn get_arg_local<T>(&self, index: i32) -> Local<T> {
+    |                              ^^^^^                 ^^^^^^^^ the same lifetime is hidden here
+    |                              |
+    |                              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+334 |   unsafe fn get_arg_local<T>(&self, index: i32) -> Local<'_, T> {
+    |                                                          +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+    --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:1106:28
+     |
+1106 |   pub fn get_script_origin(&self) -> &ScriptOrigin {
+     |                            ^^^^^     ^^^^^^^^^^^^^
+     |                            |         ||
+     |                            |         |the same lifetime is hidden here
+     |                            |         the same lifetime is elided here
+     |                            the lifetime is elided here
+     |
+     = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+     |
+1106 |   pub fn get_script_origin(&self) -> &ScriptOrigin<'_> {
+     |                                                   ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:254:24
+    |
+254 |   pub fn get_exception(&self) -> Local<Value> {
+    |                        ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                        |
+    |                        the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+254 |   pub fn get_exception(&self) -> Local<'_, Value> {
+    |                                        +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:262:30
+    |
+262 |   pub fn get_module_requests(&self) -> Local<FixedArray> {
+    |                              ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                              |
+    |                              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+262 |   pub fn get_module_requests(&self) -> Local<'_, FixedArray> {
+    |                                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:305:31
+    |
+305 |   pub fn get_module_namespace(&self) -> Local<Value> {
+    |                               ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                               |
+    |                               the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+305 |   pub fn get_module_namespace(&self) -> Local<'_, Value> {
+    |                                               +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:446:5
+    |
+446 |     &self,
+    |     ^^^^^ the lifetime is elided here
+447 |     scope: &mut HandleScope,
+448 |   ) -> Vec<(Local<Module>, Local<Message>)> {
+    |             ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |             |
+    |             the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+448 |   ) -> Vec<(Local<'_, Module>, Local<'_, Message>)> {
+    |                   +++                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:482:24
+    |
+482 |   pub fn get_specifier(&self) -> Local<String> {
+    |                        ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                        |
+    |                        the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+482 |   pub fn get_specifier(&self) -> Local<'_, String> {
+    |                                        +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:506:32
+    |
+506 |   pub fn get_import_attributes(&self) -> Local<FixedArray> {
+    |                                ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                |
+    |                                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+506 |   pub fn get_import_attributes(&self) -> Local<'_, FixedArray> {
+    |                                                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:513:32
+    |
+513 |   pub fn get_import_assertions(&self) -> Local<FixedArray> {
+    |                                ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                |
+    |                                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+513 |   pub fn get_import_assertions(&self) -> Local<'_, FixedArray> {
+    |                                                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/object.rs:407:31
+    |
+407 |   pub fn get_constructor_name(&self) -> Local<String> {
+    |                               ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                               |
+    |                               the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+407 |   pub fn get_constructor_name(&self) -> Local<'_, String> {
+    |                                               +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/property_descriptor.rs:132:16
+    |
+132 |   pub fn value(&self) -> Local<Value> {
+    |                ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                |
+    |                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+132 |   pub fn value(&self) -> Local<'_, Value> {
+    |                                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/property_descriptor.rs:136:14
+    |
+136 |   pub fn get(&self) -> Local<Value> {
+    |              ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |              |
+    |              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+136 |   pub fn get(&self) -> Local<'_, Value> {
+    |                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/property_descriptor.rs:140:14
+    |
+140 |   pub fn set(&self) -> Local<Value> {
+    |              ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |              |
+    |              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+140 |   pub fn set(&self) -> Local<'_, Value> {
+    |                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/script_or_module.rs:21:28
+   |
+21 |   pub fn get_resource_name(&self) -> Local<Value> {
+   |                            ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                            |
+   |                            the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+21 |   pub fn get_resource_name(&self) -> Local<'_, Value> {
+   |                                            +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/script_or_module.rs:34:31
+   |
+34 |   pub fn host_defined_options(&self) -> Local<Data> {
+   |                               ^^^^^     ^^^^^^^^^^^ the same lifetime is hidden here
+   |                               |
+   |                               the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+34 |   pub fn host_defined_options(&self) -> Local<'_, Data> {
+   |                                               +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/wasm.rs:181:17
+    |
+181 |   pub fn buffer(&self) -> Local<ArrayBuffer> {
+    |                 ^^^^^     ^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                 |
+    |                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+181 |   pub fn buffer(&self) -> Local<'_, ArrayBuffer> {
+    |                                 +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/inspector.rs:92:47
+   |
+92 |   fn v8_inspector__StringBuffer__string(this: &StringBuffer) -> StringView;
+   |                                               ^^^^^^^^^^^^^     ^^^^^^^^^^ the same lifetime is hidden here
+   |                                               |
+   |                                               the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+92 |   fn v8_inspector__StringBuffer__string(this: &StringBuffer) -> StringView<'_>;
+   |                                                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/inspector.rs:571:5
+    |
+571 |     &mut self,
+    |     ^^^^^^^^^ the lifetime is elided here
+572 |     context_group_id: i32,
+573 |   ) -> Option<Local<Context>> {
+    |               ^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+573 |   ) -> Option<Local<'_, Context>> {
+    |                     +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/inspector.rs:711:17
+    |
+711 |   pub fn string(&self) -> StringView {
+    |                 ^^^^^     ^^^^^^^^^^ the same lifetime is hidden here
+    |                 |
+    |                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+711 |   pub fn string(&self) -> StringView<'_> {
+    |                                     ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/script_compiler.rs:180:26
+    |
+180 |   pub fn get_cached_data(&self) -> Option<&CachedData> {
+    |                          ^^^^^            ^^^^^^^^^^^
+    |                          |                ||
+    |                          |                |the same lifetime is hidden here
+    |                          |                the same lifetime is elided here
+    |                          the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+180 |   pub fn get_cached_data(&self) -> Option<&CachedData<'_>> {
+    |                                                      ++++
+
+   Compiling hyper-tls v0.6.0
+   Compiling serde_v8 v0.240.0
+   Compiling deno_core v0.331.0
+   Compiling dirs v6.0.0
+   Compiling rustls-platform-verifier-android v0.1.1
+   Compiling md5 v0.8.1
+   Compiling extended v0.1.0
+   Compiling urlencoding v2.1.3
+   Compiling symphonia-format-riff v0.6.0
+   Compiling opusic-sys v0.7.3 (/Users/hugo/Projects/tunes4r-core/opusic-sys-patched)
+   Compiling jengine v0.1.0 (/Users/hugo/Projects/jengine)
+warning: unused import: `std::cell::RefCell`
+ --> /Users/hugo/Projects/jengine/src/bindings/crypto.rs:1:5
+  |
+1 | use std::cell::RefCell;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `TypedArrayKind`
+ --> /Users/hugo/Projects/jengine/src/bindings/crypto.rs:4:25
+  |
+4 | use crate::value::{Obj, TypedArrayKind, Value};
+  |                         ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::ast::Stmt`
+ --> /Users/hugo/Projects/jengine/src/bindings/date.rs:3:5
+  |
+3 | use crate::ast::Stmt;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::cell::RefCell`
+ --> /Users/hugo/Projects/jengine/src/bindings/date.rs:6:5
+  |
+6 | use std::cell::RefCell;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `TypedArrayKind`
+ --> /Users/hugo/Projects/jengine/src/bindings/text_decoder.rs:4:25
+  |
+4 | use crate::value::{Obj, TypedArrayKind, Value};
+  |                         ^^^^^^^^^^^^^^
+
+   Compiling symphonia-format-mkv v0.6.0
+   Compiling symphonia-codec-vorbis v0.6.0
+warning: `v8` (lib) generated 26 warnings (run `cargo fix --lib -p v8` to apply 26 suggestions)
+   Compiling symphonia-format-caf v0.6.0
+warning: unused variable: `name`
+   --> /Users/hugo/Projects/jengine/src/parser.rs:153:21
+    |
+153 |                 let name = if let Tok::Ident(s) = self.peek().clone() { self.eat(); s } else { "".to_string() };
+    |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `BOTGUARD_CREATE_URL` is never used
+  --> /Users/hugo/Projects/jengine/src/bindings/botguard.rs:24:7
+   |
+24 | const BOTGUARD_CREATE_URL: &str = "https://www.youtube.com/api/jnn/v1/Create";
+   |       ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `BOTGUARD_GENERATE_IT_URL` is never used
+  --> /Users/hugo/Projects/jengine/src/bindings/botguard.rs:25:7
+   |
+25 | const BOTGUARD_GENERATE_IT_URL: &str = "https://www.youtube.com/api/jnn/v1/GenerateIT";
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `json_stringify` is never used
+   --> /Users/hugo/Projects/jengine/src/interp/builtins.rs:864:4
+    |
+864 | fn json_stringify(v: &Value) -> String {
+    |    ^^^^^^^^^^^^^^
+
+   Compiling symphonia-codec-aac v0.6.0
+   Compiling symphonia-format-ogg v0.6.0
+   Compiling symphonia-format-isomp4 v0.6.0
+   Compiling symphonia-bundle-flac v0.6.0
+   Compiling symphonia-codec-alac v0.6.0
+   Compiling symphonia-codec-adpcm v0.6.0
+   Compiling symphonia-bundle-mp3 v0.6.0
+   Compiling symphonia-codec-pcm v0.6.0
+   Compiling realfft v3.5.0
+   Compiling rubato v0.14.1
+   Compiling symphonia v0.6.0
+   Compiling ringbuf v0.5.0
+   Compiling webpki-roots v0.26.11
+   Compiling env_filter v0.1.4
+   Compiling matchers v0.2.0
+   Compiling audio_thread_priority v0.35.1
+   Compiling tracing-log v0.2.0
+   Compiling sharded-slab v0.1.7
+   Compiling thread_local v1.1.9
+   Compiling nu-ansi-term v0.50.3
+   Compiling android_log-sys v0.3.2
+   Compiling tunes4r v1.0.0 (/Users/hugo/Projects/tunes4r-core/crates/ffi)
+   Compiling fingerid v0.1.0 (/Users/hugo/Projects/tunes4r-core/crates/fingerid)
+   Compiling android_logger v0.15.1
+   Compiling tracing-subscriber v0.3.23
+   Compiling deno_permissions v0.46.0
+   Compiling deno_webidl v0.187.0
+   Compiling deno_console v0.187.0
+   Compiling deno_url v0.187.0
+   Compiling ndk-context v0.1.1
+   Compiling deno_web v0.218.0
+   Compiling grammers-mtproto v0.10.0
+warning: `jengine` (lib) generated 9 warnings (run `cargo fix --lib -p jengine` to apply 6 suggestions)
+   Compiling oboe v0.6.1
+   Compiling aws-lc-rs v1.17.1
+   Compiling rustls v0.23.41
+   Compiling rustls-webpki v0.103.13
+   Compiling libsql-sys v0.9.30
+   Compiling libsql v0.9.30
+   Compiling grammers-session v0.10.0
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.12.28
+   Compiling reqwest v0.13.4
+   Compiling grammers-mtsender v0.10.0
+   Compiling grammers-client v0.10.0
+   Compiling rustypipe-botguard v0.1.2
+   Compiling ytex v0.1.0 (/Users/hugo/Projects/ytex)
+   Compiling tunes4r-player v0.1.0 (/Users/hugo/Projects/tunes4r-core/crates/player)
+    Finished `release` profile [optimized] target(s) in 52.06s
+     Copying libraries to /Users/hugo/Projects/tunes4r_player/android/src/main/jniLibs
+    Building x86_64 (x86_64-linux-android)
+warning: patch `rquickjs-sys v0.12.0 (/Users/hugo/Projects/tunes4r-core/rquickjs-sys-patched)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling cfg-if v1.0.4
+   Compiling smallvec v1.15.2
+   Compiling log v0.4.33
+   Compiling memchr v2.8.2
+   Compiling bitflags v2.13.0
+   Compiling pin-project-lite v0.2.17
+   Compiling libc v0.2.186
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling scopeguard v1.2.0
+   Compiling once_cell v1.21.4
+   Compiling num-traits v0.2.19
+   Compiling parking_lot_core v0.9.12
+   Compiling stable_deref_trait v1.2.1
+   Compiling zerofrom v0.1.8
+   Compiling futures-core v0.3.32
+   Compiling itoa v1.0.18
+   Compiling futures-sink v0.3.32
+   Compiling writeable v0.6.3
+   Compiling lock_api v0.4.14
+   Compiling litemap v0.8.2
+   Compiling utf8_iter v1.0.4
+   Compiling yoke v0.8.3
+   Compiling percent-encoding v2.3.2
+   Compiling slab v0.4.12
+   Compiling icu_normalizer_data v2.2.0
+   Compiling icu_properties_data v2.2.0
+   Compiling futures-channel v0.3.32
+   Compiling futures-io v0.3.32
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling futures-task v0.3.32
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling strength_reduce v0.2.4
+   Compiling form_urlencoded v1.2.2
+   Compiling lazy_static v1.5.0
+   Compiling getrandom v0.4.3
+   Compiling zmij v1.0.21
+   Compiling tracing-core v0.1.36
+   Compiling typenum v1.20.1
+   Compiling rand_core v0.6.4
+   Compiling rand_core v0.10.1
+   Compiling serde_json v1.0.150
+   Compiling bytemuck v1.25.0
+   Compiling thiserror v2.0.18
+   Compiling rand v0.8.8
+   Compiling zeroize v1.9.0
+   Compiling aws-lc-sys v0.42.0
+   Compiling crc32fast v1.5.0
+   Compiling simd-adler32 v0.3.9
+   Compiling adler2 v2.0.1
+   Compiling regex-syntax v0.8.11
+   Compiling futures-util v0.3.32
+   Compiling aho-corasick v1.1.4
+   Compiling rustls-pki-types v1.15.0
+   Compiling tracing v0.1.44
+   Compiling tinystr v0.8.3
+   Compiling num-integer v0.1.46
+   Compiling errno v0.3.14
+   Compiling mio v1.2.1
+   Compiling socket2 v0.6.4
+   Compiling signal-hook-registry v1.4.8
+   Compiling icu_locale_core v2.2.0
+   Compiling parking_lot v0.12.5
+   Compiling potential_utf v0.1.5
+   Compiling indexmap v2.14.0
+   Compiling icu_collections v2.2.0
+   Compiling primal-check v0.3.4
+   Compiling transpose v0.2.3
+   Compiling num-complex v0.4.6
+   Compiling hybrid-array v0.4.13
+   Compiling num-bigint v0.4.8
+   Compiling miniz_oxide v0.8.9
+   Compiling regex-lite v0.1.9
+   Compiling rustfft v6.4.1
+   Compiling radium v0.7.0
+   Compiling ring v0.17.14
+   Compiling cmov v0.5.4
+   Compiling tap v1.0.1
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling flate2 v1.1.9
+   Compiling outref v0.1.0
+   Compiling simd-abstraction v0.7.1
+   Compiling wyz v0.5.1
+   Compiling icu_provider v2.2.0
+   Compiling ctutils v0.4.2
+   Compiling icu_normalizer v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling v8 v130.0.7 (/Users/hugo/Projects/tunes4r-core/v8-android-patched)
+   Compiling openssl-sys v0.9.117
+   Compiling getrandom v0.2.17
+   Compiling const-oid v0.10.2
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling funty v2.0.0
+   Compiling untrusted v0.9.0
+   Compiling httparse v1.10.1
+   Compiling digest v0.11.3
+   Compiling regex-automata v0.4.14
+   Compiling uuid v1.26.0
+   Compiling bytes v1.12.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling debugid v0.8.0
+   Compiling bitvec v1.1.1
+   Compiling alloc-stdlib v0.2.4
+   Compiling anyhow v1.0.103
+   Compiling memoffset v0.9.1
+   Compiling base64-simd v0.7.0
+   Compiling unicode-id-start v1.4.0
+   Compiling fnv v1.0.7
+   Compiling url v2.5.8
+   Compiling openssl-probe v0.2.1
+   Compiling tokio v1.52.3
+   Compiling futures-executor v0.3.32
+   Compiling http v1.4.2
+   Compiling futures v0.3.32
+   Compiling atomic-waker v1.1.2
+   Compiling try-lock v0.2.5
+   Compiling data-encoding v2.11.1
+   Compiling if_chain v1.0.3
+   Compiling rustc-hash v1.1.0
+   Compiling tower-service v0.3.3
+   Compiling bit-vec v0.6.3
+   Compiling bit-set v0.5.3
+   Compiling http-body v1.0.1
+   Compiling want v0.3.1
+   Compiling pin-project v1.1.13
+   Compiling brotli-decompressor v5.0.3
+   Compiling bincode v1.3.3
+   Compiling inout v0.2.2
+   Compiling capacity_builder v0.1.3
+   Compiling deno_core_icudata v0.74.0
+   Compiling foreign-types-shared v0.1.1
+   Compiling az v1.3.0
+   Compiling cpufeatures v0.3.0
+   Compiling static_assertions v1.1.0
+   Compiling byteorder v1.5.0
+   Compiling cooked-waker v5.0.0
+   Compiling subtle v2.6.1
+   Compiling brotli v8.0.4
+   Compiling openssl v0.10.81
+   Compiling foreign-types v0.3.2
+   Compiling cipher v0.5.2
+   Compiling libsql-ffi v0.9.30
+   Compiling sourcemap v8.0.1
+   Compiling base64 v0.22.1
+   Compiling utf8parse v0.2.2
+   Compiling compression-core v0.4.32
+   Compiling regex v1.12.4
+   Compiling ipnet v2.12.0
+   Compiling symphonia-core v0.6.0
+   Compiling native-tls v0.2.18
+   Compiling thiserror v1.0.69
+   Compiling anstyle-parse v1.0.0
+   Compiling zerocopy v0.7.35
+   Compiling grammers-tl-types v0.10.0
+   Compiling http-body-util v0.1.3
+   Compiling hmac v0.13.0
+   Compiling deranged v0.5.8
+   Compiling android_system_properties v0.1.5
+   Compiling webpki-roots v1.0.8
+   Compiling sync_wrapper v1.0.2
+   Compiling rustix v0.38.44
+   Compiling anstyle-query v1.1.5
+   Compiling unic-common v0.9.0
+   Compiling num-conv v0.2.2
+   Compiling cpubits v0.1.1
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling linux-raw-sys v0.4.15
+   Compiling colorchoice v1.0.5
+   Compiling tower-layer v0.3.3
+   Compiling powerfmt v0.2.0
+   Compiling unic-char-range v0.9.0
+   Compiling time-core v0.1.9
+   Compiling unic-char-property v0.9.0
+   Compiling anstream v1.0.0
+   Compiling aes v0.9.1
+   Compiling unic-ucd-version v0.9.0
+   Compiling sys_traits v0.1.28
+   Compiling pbkdf2 v0.13.0
+   Compiling cookie v0.18.1
+   Compiling ctr v0.10.1
+   Compiling sha1 v0.11.0
+   Compiling time v0.3.53
+   Compiling sha2 v0.11.0
+   Compiling compression-codecs v0.4.38
+   Compiling symphonia-metadata v0.6.0
+   Compiling deno_error v0.5.5
+   Compiling tokio-util v0.7.18
+   Compiling wasm_dep_analyzer v0.2.0
+warning: v8@130.0.7: Not using sccache or ccache
+   Compiling symphonia-common v0.6.0
+   Compiling h2 v0.4.19
+   Compiling deno_unsync v0.4.4
+   Compiling async-compression v0.4.43
+   Compiling tower v0.5.3
+   Compiling rustls-native-certs v0.8.4
+   Compiling glass_pumpkin v2.0.0-rc0
+   Compiling psl-types v2.0.11
+   Compiling termcolor v1.4.1
+   Compiling mime v0.3.17
+   Compiling hex v0.4.3
+   Compiling home v0.5.12
+   Compiling either v1.16.0
+   Compiling serde_with v3.21.0
+   Compiling deno_terminal v0.2.3
+   Compiling tower-http v0.6.11
+   Compiling which v6.0.3
+   Compiling grammers-crypto v0.10.0
+   Compiling publicsuffix v2.3.0
+   Compiling capacity_builder v0.5.0
+   Compiling tokio-native-tls v0.3.1
+   Compiling deno_path_util v0.3.0
+   Compiling unic-ucd-ident v0.9.0
+   Compiling encoding_rs v0.8.33
+   Compiling simdutf8 v0.1.5
+   Compiling option-ext v0.2.0
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:267:24
+    |
+267 |   pub(crate) fn holder(&self) -> Local<Object> {
+    |                        ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                        |
+    |                        the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+267 |   pub(crate) fn holder(&self) -> Local<'_, Object> {
+    |                                        +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:272:28
+    |
+272 |   pub(crate) fn new_target(&self) -> Local<Value> {
+    |                            ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                            |
+    |                            the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+272 |   pub(crate) fn new_target(&self) -> Local<'_, Value> {
+    |                                            +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:277:22
+    |
+277 |   pub(crate) fn this(&self) -> Local<Object> {
+    |                      ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                      |
+    |                      the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+277 |   pub(crate) fn this(&self) -> Local<'_, Object> {
+    |                                      +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:282:22
+    |
+282 |   pub(crate) fn data(&self) -> Local<Value> {
+    |                      ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                      |
+    |                      the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+282 |   pub(crate) fn data(&self) -> Local<'_, Value> {
+    |                                      +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:296:21
+    |
+296 |   pub(crate) fn get(&self, index: int) -> Local<Value> {
+    |                     ^^^^^                 ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                     |
+    |                     the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+296 |   pub(crate) fn get(&self, index: int) -> Local<'_, Value> {
+    |                                                 +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:326:39
+    |
+326 |   unsafe fn get_implicit_arg_local<T>(&self, index: i32) -> Local<T> {
+    |                                       ^^^^^                 ^^^^^^^^ the same lifetime is hidden here
+    |                                       |
+    |                                       the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+326 |   unsafe fn get_implicit_arg_local<T>(&self, index: i32) -> Local<'_, T> {
+    |                                                                   +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:334:30
+    |
+334 |   unsafe fn get_arg_local<T>(&self, index: i32) -> Local<T> {
+    |                              ^^^^^                 ^^^^^^^^ the same lifetime is hidden here
+    |                              |
+    |                              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+334 |   unsafe fn get_arg_local<T>(&self, index: i32) -> Local<'_, T> {
+    |                                                          +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+    --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/function.rs:1106:28
+     |
+1106 |   pub fn get_script_origin(&self) -> &ScriptOrigin {
+     |                            ^^^^^     ^^^^^^^^^^^^^
+     |                            |         ||
+     |                            |         |the same lifetime is hidden here
+     |                            |         the same lifetime is elided here
+     |                            the lifetime is elided here
+     |
+     = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+     |
+1106 |   pub fn get_script_origin(&self) -> &ScriptOrigin<'_> {
+     |                                                   ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:254:24
+    |
+254 |   pub fn get_exception(&self) -> Local<Value> {
+    |                        ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                        |
+    |                        the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+254 |   pub fn get_exception(&self) -> Local<'_, Value> {
+    |                                        +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:262:30
+    |
+262 |   pub fn get_module_requests(&self) -> Local<FixedArray> {
+    |                              ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                              |
+    |                              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+262 |   pub fn get_module_requests(&self) -> Local<'_, FixedArray> {
+    |                                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:305:31
+    |
+305 |   pub fn get_module_namespace(&self) -> Local<Value> {
+    |                               ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                               |
+    |                               the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+305 |   pub fn get_module_namespace(&self) -> Local<'_, Value> {
+    |                                               +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:446:5
+    |
+446 |     &self,
+    |     ^^^^^ the lifetime is elided here
+447 |     scope: &mut HandleScope,
+448 |   ) -> Vec<(Local<Module>, Local<Message>)> {
+    |             ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |             |
+    |             the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+448 |   ) -> Vec<(Local<'_, Module>, Local<'_, Message>)> {
+    |                   +++                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:482:24
+    |
+482 |   pub fn get_specifier(&self) -> Local<String> {
+    |                        ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                        |
+    |                        the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+482 |   pub fn get_specifier(&self) -> Local<'_, String> {
+    |                                        +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:506:32
+    |
+506 |   pub fn get_import_attributes(&self) -> Local<FixedArray> {
+    |                                ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                |
+    |                                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+506 |   pub fn get_import_attributes(&self) -> Local<'_, FixedArray> {
+    |                                                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/module.rs:513:32
+    |
+513 |   pub fn get_import_assertions(&self) -> Local<FixedArray> {
+    |                                ^^^^^     ^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                                |
+    |                                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+513 |   pub fn get_import_assertions(&self) -> Local<'_, FixedArray> {
+    |                                                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/object.rs:407:31
+    |
+407 |   pub fn get_constructor_name(&self) -> Local<String> {
+    |                               ^^^^^     ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                               |
+    |                               the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+407 |   pub fn get_constructor_name(&self) -> Local<'_, String> {
+    |                                               +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/property_descriptor.rs:132:16
+    |
+132 |   pub fn value(&self) -> Local<Value> {
+    |                ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                |
+    |                the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+132 |   pub fn value(&self) -> Local<'_, Value> {
+    |                                +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/property_descriptor.rs:136:14
+    |
+136 |   pub fn get(&self) -> Local<Value> {
+    |              ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |              |
+    |              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+136 |   pub fn get(&self) -> Local<'_, Value> {
+    |                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/property_descriptor.rs:140:14
+    |
+140 |   pub fn set(&self) -> Local<Value> {
+    |              ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+    |              |
+    |              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+140 |   pub fn set(&self) -> Local<'_, Value> {
+    |                              +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/script_or_module.rs:21:28
+   |
+21 |   pub fn get_resource_name(&self) -> Local<Value> {
+   |                            ^^^^^     ^^^^^^^^^^^^ the same lifetime is hidden here
+   |                            |
+   |                            the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+21 |   pub fn get_resource_name(&self) -> Local<'_, Value> {
+   |                                            +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/script_or_module.rs:34:31
+   |
+34 |   pub fn host_defined_options(&self) -> Local<Data> {
+   |                               ^^^^^     ^^^^^^^^^^^ the same lifetime is hidden here
+   |                               |
+   |                               the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+34 |   pub fn host_defined_options(&self) -> Local<'_, Data> {
+   |                                               +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/wasm.rs:181:17
+    |
+181 |   pub fn buffer(&self) -> Local<ArrayBuffer> {
+    |                 ^^^^^     ^^^^^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                 |
+    |                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+181 |   pub fn buffer(&self) -> Local<'_, ArrayBuffer> {
+    |                                 +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/inspector.rs:92:47
+   |
+92 |   fn v8_inspector__StringBuffer__string(this: &StringBuffer) -> StringView;
+   |                                               ^^^^^^^^^^^^^     ^^^^^^^^^^ the same lifetime is hidden here
+   |                                               |
+   |                                               the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+92 |   fn v8_inspector__StringBuffer__string(this: &StringBuffer) -> StringView<'_>;
+   |                                                                           ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/inspector.rs:571:5
+    |
+571 |     &mut self,
+    |     ^^^^^^^^^ the lifetime is elided here
+572 |     context_group_id: i32,
+573 |   ) -> Option<Local<Context>> {
+    |               ^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+573 |   ) -> Option<Local<'_, Context>> {
+    |                     +++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/inspector.rs:711:17
+    |
+711 |   pub fn string(&self) -> StringView {
+    |                 ^^^^^     ^^^^^^^^^^ the same lifetime is hidden here
+    |                 |
+    |                 the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+711 |   pub fn string(&self) -> StringView<'_> {
+    |                                     ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> /Users/hugo/Projects/tunes4r-core/v8-android-patched/src/script_compiler.rs:180:26
+    |
+180 |   pub fn get_cached_data(&self) -> Option<&CachedData> {
+    |                          ^^^^^            ^^^^^^^^^^^
+    |                          |                ||
+    |                          |                |the same lifetime is hidden here
+    |                          |                the same lifetime is elided here
+    |                          the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+180 |   pub fn get_cached_data(&self) -> Option<&CachedData<'_>> {
+    |                                                      ++++
+
+   Compiling outref v0.5.2
+   Compiling fqdn v0.3.12
+   Compiling strsim v0.11.1
+   Compiling jiff-core v0.1.0
+   Compiling clap_lex v1.1.0
+   Compiling konst_macro_rules v0.2.19
+   Compiling serde_v8 v0.240.0
+   Compiling ryu v1.0.23
+   Compiling deno_core v0.331.0
+   Compiling vsimd v0.8.0
+   Compiling jiff v0.2.35
+   Compiling serde_urlencoded v0.7.1
+   Compiling konst v0.2.20
+   Compiling base64-simd v0.8.0
+   Compiling clap_builder v4.6.0
+   Compiling simd_cesu8 v1.1.1
+   Compiling dirs-sys v0.5.0
+   Compiling getrandom v0.3.4
+   Compiling jni-sys v0.4.1
+   Compiling jni v0.22.4
+   Compiling cookie_store v0.22.1
+   Compiling urlpattern v0.3.0
+   Compiling mime_guess v2.0.5
+   Compiling os_info v3.15.0
+   Compiling iana-time-zone v0.1.65
+   Compiling env_filter v2.0.0
+   Compiling combine v4.6.7
+warning: `v8` (lib) generated 26 warnings (run `cargo fix --lib -p v8` to apply 26 suggestions)
+   Compiling unicase v2.9.0
+   Compiling locate-locale v0.2.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling oboe-sys v0.6.1
+   Compiling chrono v0.4.45
+   Compiling dirs v6.0.0
+   Compiling hyper v1.10.1
+   Compiling const_format v0.2.36
+   Compiling urlencoding v2.1.3
+   Compiling rustls-platform-verifier-android v0.1.1
+   Compiling extended v0.1.0
+   Compiling md5 v0.8.1
+   Compiling symphonia-format-riff v0.6.0
+   Compiling clap v4.6.1
+   Compiling opusic-sys v0.7.3 (/Users/hugo/Projects/tunes4r-core/opusic-sys-patched)
+   Compiling hyper-util v0.1.20
+   Compiling env_logger v0.11.11
+   Compiling jengine v0.1.0 (/Users/hugo/Projects/jengine)
+warning: unused import: `std::cell::RefCell`
+ --> /Users/hugo/Projects/jengine/src/bindings/crypto.rs:1:5
+  |
+1 | use std::cell::RefCell;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `TypedArrayKind`
+ --> /Users/hugo/Projects/jengine/src/bindings/crypto.rs:4:25
+  |
+4 | use crate::value::{Obj, TypedArrayKind, Value};
+  |                         ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::ast::Stmt`
+ --> /Users/hugo/Projects/jengine/src/bindings/date.rs:3:5
+  |
+3 | use crate::ast::Stmt;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::cell::RefCell`
+ --> /Users/hugo/Projects/jengine/src/bindings/date.rs:6:5
+  |
+6 | use std::cell::RefCell;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `TypedArrayKind`
+ --> /Users/hugo/Projects/jengine/src/bindings/text_decoder.rs:4:25
+  |
+4 | use crate::value::{Obj, TypedArrayKind, Value};
+  |                         ^^^^^^^^^^^^^^
+
+   Compiling symphonia-codec-aac v0.6.0
+   Compiling symphonia-format-mkv v0.6.0
+   Compiling symphonia-bundle-flac v0.6.0
+   Compiling symphonia-codec-vorbis v0.6.0
+   Compiling hyper-tls v0.6.0
+warning: unused variable: `name`
+   --> /Users/hugo/Projects/jengine/src/parser.rs:153:21
+    |
+153 |                 let name = if let Tok::Ident(s) = self.peek().clone() { self.eat(); s } else { "".to_string() };
+    |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `BOTGUARD_CREATE_URL` is never used
+  --> /Users/hugo/Projects/jengine/src/bindings/botguard.rs:24:7
+   |
+24 | const BOTGUARD_CREATE_URL: &str = "https://www.youtube.com/api/jnn/v1/Create";
+   |       ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `BOTGUARD_GENERATE_IT_URL` is never used
+  --> /Users/hugo/Projects/jengine/src/bindings/botguard.rs:25:7
+   |
+25 | const BOTGUARD_GENERATE_IT_URL: &str = "https://www.youtube.com/api/jnn/v1/GenerateIT";
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `json_stringify` is never used
+   --> /Users/hugo/Projects/jengine/src/interp/builtins.rs:864:4
+    |
+864 | fn json_stringify(v: &Value) -> String {
+    |    ^^^^^^^^^^^^^^
+
+   Compiling deno_permissions v0.46.0
+   Compiling deno_console v0.187.0
+   Compiling deno_webidl v0.187.0
+   Compiling deno_web v0.218.0
+   Compiling deno_url v0.187.0
+   Compiling symphonia-format-caf v0.6.0
+   Compiling symphonia-format-isomp4 v0.6.0
+   Compiling symphonia-codec-alac v0.6.0
+   Compiling symphonia-format-ogg v0.6.0
+   Compiling symphonia-codec-adpcm v0.6.0
+   Compiling symphonia-codec-pcm v0.6.0
+   Compiling symphonia-bundle-mp3 v0.6.0
+   Compiling realfft v3.5.0
+   Compiling symphonia v0.6.0
+   Compiling rubato v0.14.1
+   Compiling ringbuf v0.5.0
+   Compiling webpki-roots v0.26.11
+   Compiling env_filter v0.1.4
+   Compiling matchers v0.2.0
+   Compiling audio_thread_priority v0.35.1
+   Compiling tracing-log v0.2.0
+   Compiling sharded-slab v0.1.7
+   Compiling thread_local v1.1.9
+   Compiling android_log-sys v0.3.2
+   Compiling nu-ansi-term v0.50.3
+   Compiling android_logger v0.15.1
+   Compiling tunes4r v1.0.0 (/Users/hugo/Projects/tunes4r-core/crates/ffi)
+   Compiling fingerid v0.1.0 (/Users/hugo/Projects/tunes4r-core/crates/fingerid)
+   Compiling ndk-context v0.1.1
+   Compiling tracing-subscriber v0.3.23
+   Compiling grammers-mtproto v0.10.0
+warning: `jengine` (lib) generated 9 warnings (run `cargo fix --lib -p jengine` to apply 6 suggestions)
+   Compiling oboe v0.6.1
+   Compiling aws-lc-rs v1.17.1
+   Compiling rustls v0.23.41
+   Compiling rustls-webpki v0.103.13
+   Compiling libsql-sys v0.9.30
+   Compiling libsql v0.9.30
+   Compiling grammers-session v0.10.0
+   Compiling grammers-mtsender v0.10.0
+   Compiling grammers-client v0.10.0
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.12.28
+   Compiling reqwest v0.13.4
+   Compiling rustypipe-botguard v0.1.2
+   Compiling ytex v0.1.0 (/Users/hugo/Projects/ytex)
+   Compiling tunes4r-player v0.1.0 (/Users/hugo/Projects/tunes4r-core/crates/player)
+    Finished `release` profile [optimized] target(s) in 55.45s
+     Copying libraries to /Users/hugo/Projects/tunes4r_player/android/src/main/jniLibs
+[Android] libc++_shared.so copied.
+[Android] Done.
