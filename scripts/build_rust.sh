@@ -320,11 +320,19 @@ build_android() {
 
     local env_args=()
     [ -n "$openssl_dir" ] && [ -d "$openssl_dir" ] && env_args+=("OPENSSL_DIR=$PWD/$openssl_dir")
-    env "${env_args[@]}" cargo ndk \
-      -t "$target" \
-      -o "$jni" \
-      build --lib \
-      $profile_flag $feat_flag
+    if [ ${#env_args[@]} -gt 0 ]; then
+      env "${env_args[@]}" cargo ndk \
+        -t "$target" \
+        -o "$jni" \
+        build --lib \
+        $profile_flag $feat_flag
+    else
+      env cargo ndk \
+        -t "$target" \
+        -o "$jni" \
+        build --lib \
+        $profile_flag $feat_flag
+    fi
   done
   cd "$PLUGIN_DIR"
 
