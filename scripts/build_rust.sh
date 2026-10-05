@@ -33,7 +33,15 @@ fi
 
 BUILD_TYPE="${2:-release}"
 PLATFORM="${1:-all}"
-FEATURES="${FEATURES:-}"
+
+# Default to `fingerprint` rather than to nothing, because a build without it
+# produces a library that still exports audio_engine_fingerprint_file but always
+# answers "chromaprint feature not enabled at build time". The Dart side treats
+# that as "identification unavailable" and returns null, so the whole acoustic
+# path is silently inert with no error anywhere to notice it by. Defaulting here
+# rather than only in the Makefile covers the direct `./scripts/build_rust.sh
+# macos` invocation that the project docs recommend.
+FEATURES="${FEATURES:-fingerprint}"
 
 echo "=== tunes4r Rust Build ==="
 echo "  Plugin dir: $PLUGIN_DIR"

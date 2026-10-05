@@ -10,7 +10,8 @@ export 'src/tunes4r_player_ffi.dart'
         engineEventEndOfStream,
         engineEventPositionReset,
         engineEventError,
-        engineEventSeekQueued;
+        engineEventSeekQueued,
+        engineEventSeekFailed;
 export 'src/models.dart'
     show
         PlaybackState,
@@ -22,4 +23,5 @@ export 'src/models.dart'
         Tunes4rEngineException,
         Tunes4rLoadException,
         Tunes4rErrorCode;
-export 'src/audio_engine.dart' show AudioEngine;
+export 'src/audio_engine.dart' show AudioEngine, SeekStatus;
+export 'src/file_fingerprinter.dart' show AudioFingerprint, fingerprintAudioFile;
