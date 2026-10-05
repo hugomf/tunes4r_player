@@ -91,6 +91,7 @@ enum EngineEventType {
   error(6),
   seekQueued(7),
   positionUpdate(8),
+  seekFailed(9),
   loadFailed(10);
 
   final int value;

@@ -56,6 +56,9 @@ typedef _EngineIsPlayingDart = bool Function(Pointer<Void>);
 typedef _EngineGetStateNative = Int32 Function(Pointer<Void>);
 typedef _EngineGetStateDart = int Function(Pointer<Void>);
 
+typedef _EngineGetSeekStatusNative = Int32 Function(Pointer<Void>);
+typedef _EngineGetSeekStatusDart = int Function(Pointer<Void>);
+
 final class PlaybackPosition extends Struct {
   @Uint64()
   external int currentMs;
@@ -90,6 +93,9 @@ const int engineEventPositionReset = 5;
 const int engineEventError = 6;
 const int engineEventSeekQueued = 7;
 const int engineEventPositionUpdate = 8;
+
+/// The decode thread could not honour a seek; playback stayed where it was.
+const int engineEventSeekFailed = 9;
 final class AdaptiveRingBufferStruct extends Struct {
   @Uint64()
   external int capacityMs;
@@ -175,6 +181,9 @@ typedef _PollRecordingDart = Pointer<Utf8> Function();
 typedef _GetFingerprintNative = Pointer<Utf8> Function(Pointer<Void>);
 typedef _GetFingerprintDart = Pointer<Utf8> Function(Pointer<Void>);
 
+typedef _FingerprintFileNative = Pointer<Utf8> Function(Pointer<Utf8>, Int32);
+typedef _FingerprintFileDart = Pointer<Utf8> Function(Pointer<Utf8>, int);
+
 typedef _FingeridHashesNative = Pointer<Utf8> Function(
   Pointer<Int16>,
   Int32,
@@ -239,6 +248,7 @@ class Tunes4rFFI {
   late _EngineGetVolumeDart _getVolume;
   late _EngineIsPlayingDart _isPlaying;
   late _EngineGetStateDart _getState;
+  late _EngineGetSeekStatusDart _getSeekStatus;
   late _EngineGetPositionDart _getPosition;
   late _EnginePollEventDart _pollEvent;
   late _EngineSetEventCallbackDart _setEventCallback;
@@ -257,6 +267,7 @@ class Tunes4rFFI {
   _StartRecordingDart? _startRecording;
   _PollRecordingDart? _pollRecording;
   _GetFingerprintDart? _getFingerprint;
+  _FingerprintFileDart? _fingerprintFile;
   _FingeridHashesDart? _fingeridHashes;
   _GetFingeridHashesDart? _getFingeridHashes;
   _YoutubeGetStreamUrlDart? _youtubeGetStreamUrl;
@@ -412,6 +423,9 @@ class Tunes4rFFI {
     _getState = l.lookup<NativeFunction<_EngineGetStateNative>>(
       'audio_engine_get_state',
     ).asFunction();
+    _getSeekStatus = l.lookup<NativeFunction<_EngineGetSeekStatusNative>>(
+      'audio_engine_get_seek_status',
+    ).asFunction();
     _getPosition = l.lookup<NativeFunction<_EngineGetPositionNative>>(
       'audio_engine_get_position',
     ).asFunction();
@@ -529,6 +543,19 @@ class Tunes4rFFI {
       debugPrint('[tunes4r] Optional symbol not found: audio_engine_get_fingerprint');
       _getFingerprint = null;
     }
+    try {
+      _fingerprintFile = l
+          .lookup<NativeFunction<_FingerprintFileNative>>(
+            'audio_engine_fingerprint_file',
+          )
+          .asFunction();
+      debugPrint('[tunes4r] fingerprintFile bound');
+    } catch (_) {
+      debugPrint(
+        '[tunes4r] Optional symbol not found: audio_engine_fingerprint_file',
+      );
+      _fingerprintFile = null;
+    }
   }
 
   void _bindFingeridHashes(DynamicLibrary l) {
@@ -629,6 +656,9 @@ class Tunes4rFFI {
   double getVolume(Pointer<Void> h) => _getVolume(h);
   bool isPlaying(Pointer<Void> h) => _isPlaying(h);
   int getState(Pointer<Void> h) => _getState(h);
+
+  /// 0 = no seek pending, 1 = last seek landed, 2 = last seek was dropped.
+  int getSeekStatus(Pointer<Void> h) => _getSeekStatus(h);
   PlaybackPosition getPosition(Pointer<Void> h) => _getPosition(h);
   EngineEventStruct pollEvent(Pointer<Void> h) => _pollEvent(h);
   void setEventCallback(
@@ -724,6 +754,37 @@ class Tunes4rFFI {
     final s = resultPtr.toDartString();
     calloc.free(resultPtr);
     return s.isEmpty ? null : s;
+  }
+
+  /// Fingerprint an audio file already on disk.
+  ///
+  /// Returns `{"fingerprint":"...","duration":N}` or `{"error":"..."}` as a
+  /// JSON string, or null when the native library was built without the
+  /// `fingerprint` feature. [maxSeconds] caps how much audio is decoded; pass 0
+  /// for the native default.
+  ///
+  /// The result is freed with `youtube_free_string` rather than `calloc.free`
+  /// because the native side allocated it as a `CString`. Fingerprinting runs
+  /// over a whole library during repair, so a mismatched free would leak on
+  /// every song.
+  String? fingerprintFile(String path, {int maxSeconds = 0}) {
+    final fn = _fingerprintFile;
+    if (fn == null) return null;
+    final free = _youtubeFreeString;
+    final pathPtr = path.toNativeUtf8();
+    try {
+      final resultPtr = fn(pathPtr, maxSeconds);
+      if (resultPtr == nullptr) return null;
+      final s = resultPtr.toDartString();
+      if (free != null) {
+        free.call(resultPtr);
+      } else {
+        calloc.free(resultPtr);
+      }
+      return s.isEmpty ? null : s;
+    } finally {
+      calloc.free(pathPtr);
+    }
   }
 
   /// Start recording microphone audio in a background thread.

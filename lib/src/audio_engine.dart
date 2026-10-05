@@ -10,6 +10,21 @@ import 'tunes4r_player_ffi.dart';
 
 bool _debugPos = false;
 
+/// Outcome of the most recent `AudioEngine.seek`, as reported by the native
+/// decode thread.
+enum SeekStatus {
+  /// No seek has been requested, or the outcome has not been published yet.
+  none,
+
+  /// The engine moved playback to the requested position.
+  landed,
+
+  /// The engine could not honour the seek (no cue index on a remote source,
+  /// non-seekable stream, target out of range). Playback did NOT move — the
+  /// reported position is unchanged and still describes the real playhead.
+  failed,
+}
+
 // ---------------------------------------------------------------------------
 // Native event bridge
 // ---------------------------------------------------------------------------
@@ -87,6 +102,14 @@ class SeekClock {
 /// engine.stateStream.listen((state) => print(state));
 /// engine.play('https://example.com/audio.mp3');
 /// ```
+const _kSeekToleranceMs = 500;
+
+bool isPositionAcceptableAfterSeek(int currentMs, int? seekTargetMs) {
+  if (seekTargetMs == null) return true;
+  final diff = (currentMs - seekTargetMs).abs();
+  return diff <= _kSeekToleranceMs;
+}
+
 class AudioEngine {
   final Tunes4rFFI _ffi;
   Pointer<Void>? _handle;
@@ -108,6 +131,18 @@ class AudioEngine {
 
   /// Interpolation clock for smooth UI without per-frame FFI.
   final SeekClock seekClock = SeekClock();
+
+  /// Track the seek target to filter stale position polls after seeking.
+  /// WebM decoder position lags behind; ignore polls behind the target
+  /// for a short window until the engine catches up.
+  int? _seekTargetMs;
+
+  /// Deadline for [_seekTargetMs]. A seek the engine cannot satisfy (no cue
+  /// index on a remote source, non-seekable stream) leaves the position far
+  /// from the target forever — without a deadline the filter would latch and
+  /// silently stop all position/state updates for the rest of the track.
+  static const _kSeekTargetTimeout = Duration(seconds: 3);
+  DateTime? _seekTargetDeadline;
 
   /// Returns the native handle or throws if disposed.
   Pointer<Void> get _h {
@@ -177,7 +212,6 @@ class AudioEngine {
   /// directly every tick (always works).
   Timer? _eventTimer;
   int _lastPolledPosMs = 0;
-  int _lastPolledDurMs = 0;
   int _lastPolledState = -1;
   bool _engineError = false;
 
@@ -188,6 +222,8 @@ class AudioEngine {
   void _startEvents() {
     if (_active) return;
     _active = true;
+    _seekTargetMs = null;
+    _seekTargetDeadline = null;
 
     _ffi.setEventCallback(_h, _eventCallback.nativeFunction);
 
@@ -220,22 +256,51 @@ class AudioEngine {
     if (handle == null) { if (_debugPos) debugPrint('[tunes4r] poll: handle is null'); return; }
     final pos = _ffi.getPosition(handle);
     final st = _ffi.getState(handle);
-    if (pos.currentMs != _lastPolledPosMs || st != _lastPolledState) {
-      if (_debugPos) debugPrint('[tunes4r] poll: pos=${pos.currentMs}/${pos.totalMs} st=$st — pushing');
-      _lastPolledPosMs = pos.currentMs;
-      _lastPolledState = st;
-      seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
-      seekClock.setPlaying(st == 2);
-      positionCtrl.add(pos);
-      if (!_engineError) {
-        stateCtrl.add(PlaybackState.fromValue(st));
+
+    // After a seek, hold back polls that still describe the pre-seek playhead
+    // so the UI does not flicker through stale positions. The native side now
+    // publishes an explicit outcome, so this filter is released as soon as the
+    // seek lands OR fails, and by a deadline even if no outcome ever arrives
+    // (a latched filter would silently freeze position updates for the track).
+    final target = _seekTargetMs;
+    if (target != null) {
+      final status = _ffi.getSeekStatus(handle);
+      final outcomePublished = status == 1 || status == 2;
+      final timedOut = _seekTargetDeadline != null &&
+          DateTime.now().isAfter(_seekTargetDeadline!);
+      if (status == 2 && _debugPos) {
+        debugPrint('[tunes4r] poll: engine could not seek to ${target}ms');
       }
-      if (st == 4) {
-        if (_debugPos) debugPrint('[tunes4r] poll: Finished — stopping event timer');
-        _active = false;
-        _eventTimer?.cancel();
-        _eventTimer = null;
+      if (outcomePublished ||
+          timedOut ||
+          isPositionAcceptableAfterSeek(pos.currentMs, target)) {
+        _seekTargetMs = null;
+        _seekTargetDeadline = null;
+        _pushPolledPosition(pos, st);
+      } else if (_debugPos) {
+        debugPrint('[tunes4r] poll: dropping stale pos ${pos.currentMs} (awaiting seek to $target)');
       }
+      return;
+    }
+    _pushPolledPosition(pos, st);
+  }
+
+  void _pushPolledPosition(PlaybackPosition pos, int st) {
+    if (pos.currentMs == _lastPolledPosMs && st == _lastPolledState) return;
+    if (_debugPos) debugPrint('[tunes4r] poll: pos=${pos.currentMs}/${pos.totalMs} st=$st — pushing');
+    _lastPolledPosMs = pos.currentMs;
+    _lastPolledState = st;
+    seekClock.onPositionUpdate(pos.currentMs, pos.totalMs);
+    seekClock.setPlaying(st == 2);
+    positionCtrl.add(pos);
+    if (!_engineError) {
+      stateCtrl.add(PlaybackState.fromValue(st));
+    }
+    if (st == 4) {
+      if (_debugPos) debugPrint('[tunes4r] poll: Finished — stopping event timer');
+      _active = false;
+      _eventTimer?.cancel();
+      _eventTimer = null;
     }
   }
 
@@ -272,7 +337,26 @@ class AudioEngine {
           seekClock.setPlaying(false);
           stateCtrl.add(PlaybackState.error);
         case EngineEventType.seekStarted:
+          break;
         case EngineEventType.seekCompleted:
+          _seekTargetMs = null;
+          _seekTargetDeadline = null;
+          break;
+        case EngineEventType.seekFailed:
+          // The engine could not honour the seek — playback did not move.
+          // Release the filter so the UI snaps back to the real playhead
+          // instead of staying stuck showing the requested position.
+          if (_debugPos) {
+            debugPrint('[tunes4r] event: seekFailed (pos=${intParam}ms)');
+          }
+          _seekTargetMs = null;
+          _seekTargetDeadline = null;
+          final cur = _ffi.getPosition(handle);
+          final s = _ffi.getState(handle);
+          seekClock.onPositionUpdate(cur.currentMs, cur.totalMs);
+          seekClock.setPlaying(s == 2);
+          positionCtrl.add(cur);
+          break;
         case EngineEventType.endOfStream:
         case EngineEventType.none:
         case EngineEventType.positionReset:
@@ -292,6 +376,8 @@ class AudioEngine {
     _active = false;
     _engineError = false;
     lastLoadError = null;
+    _seekTargetMs = null;
+    _seekTargetDeadline = null;
     seekClock.reset();
     _gLastPackedEvent = 0;
     _eventTimer?.cancel();
@@ -382,7 +468,12 @@ class AudioEngine {
 
   void seek(int positionMs) {
     _ffi.seek(_h, positionMs);
-    seekClock.onPositionUpdate(positionMs, seekClock.durationMs);
+    // Deliberately do NOT move [seekClock] to the target here. The clock is the
+    // interpolated playhead shown to the user; seeding it with the target would
+    // report a position the audio has not reached yet, and keep reporting it if
+    // the engine drops the seek. It is updated only from real engine polls.
+    _seekTargetMs = positionMs;
+    _seekTargetDeadline = DateTime.now().add(_kSeekTargetTimeout);
   }
 
   void setVolume(double volume) {
@@ -427,6 +518,21 @@ class AudioEngine {
   double get volume => _ffi.getVolume(_h);
 
   int get positionMs => _ffi.getPosition(_h).currentMs;
+
+  /// Outcome of the most recent [seek]: [SeekStatus.landed] when the engine
+  /// moved playback to the target, [SeekStatus.failed] when it could not.
+  /// The native side only reports a position the audio actually reached, so a
+  /// failed seek leaves [positionMs] pointing at the real playhead.
+  SeekStatus get lastSeekStatus {
+    switch (_ffi.getSeekStatus(_h)) {
+      case 1:
+        return SeekStatus.landed;
+      case 2:
+        return SeekStatus.failed;
+      default:
+        return SeekStatus.none;
+    }
+  }
 
   int get durationMs => _ffi.getPosition(_h).totalMs;
 
