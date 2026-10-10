@@ -97,7 +97,18 @@ build_ios() {
 
   # Combine simulator archs into one fat lib, then create XCFramework with
   # device + simulator slices so the pod works on all iOS targets.
-  local sim_fat="$(mktemp -u)_libtunes4r_sim.a"
+  #
+  # The fat lib must live in its own temp directory and be named `libtunes4r.a`:
+  # `xcodebuild -create-xcframework` derives each slice's BinaryPath from the
+  # library's basename, so a `mktemp -u` name leaks a `tmp.XXXX_*` filename into
+  # the xcframework and leaves consumers (the app's force_load symlinks, which
+  # point at a stable slice name) pointing at a path that disappears.
+  local tmpdir=""
+  tmpdir="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmpdir'" RETURN
+
+  local sim_fat="$tmpdir/libtunes4r.a"
   lipo -create "$sim_arm" "$sim_x86" -output "$sim_fat"
 
   rm -rf ios/Frameworks/libtunes4r.xcframework
@@ -105,8 +116,6 @@ build_ios() {
     -library "$device" \
     -library "$sim_fat" \
     -output ios/Frameworks/libtunes4r.xcframework 2>/dev/null
-
-  rm -f "$sim_fat"
 
   # Copy to the SPM package's Frameworks directory (consumed by SPM plugin
   # integration — Flutter resolves relative paths from the package symlink).
