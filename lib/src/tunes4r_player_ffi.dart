@@ -184,6 +184,17 @@ typedef _GetFingerprintDart = Pointer<Utf8> Function(Pointer<Void>);
 typedef _FingerprintFileNative = Pointer<Utf8> Function(Pointer<Utf8>, Int32);
 typedef _FingerprintFileDart = Pointer<Utf8> Function(Pointer<Utf8>, int);
 
+typedef _DecodeAsrWavNative = Pointer<Utf8> Function(
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Int32,
+);
+typedef _DecodeAsrWavDart = Pointer<Utf8> Function(
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  int,
+);
+
 typedef _FingeridHashesNative = Pointer<Utf8> Function(
   Pointer<Int16>,
   Int32,
@@ -268,6 +279,7 @@ class Tunes4rFFI {
   _PollRecordingDart? _pollRecording;
   _GetFingerprintDart? _getFingerprint;
   _FingerprintFileDart? _fingerprintFile;
+  _DecodeAsrWavDart? _decodeAsrWav;
   _FingeridHashesDart? _fingeridHashes;
   _GetFingeridHashesDart? _getFingeridHashes;
   _YoutubeGetStreamUrlDart? _youtubeGetStreamUrl;
@@ -556,6 +568,19 @@ class Tunes4rFFI {
       );
       _fingerprintFile = null;
     }
+    try {
+      _decodeAsrWav = l
+          .lookup<NativeFunction<_DecodeAsrWavNative>>(
+            'audio_engine_decode_asr_wav',
+          )
+          .asFunction();
+      debugPrint('[tunes4r] decodeAsrWav bound');
+    } catch (_) {
+      debugPrint(
+        '[tunes4r] Optional symbol not found: audio_engine_decode_asr_wav',
+      );
+      _decodeAsrWav = null;
+    }
   }
 
   void _bindFingeridHashes(DynamicLibrary l) {
@@ -723,7 +748,6 @@ class Tunes4rFFI {
       calloc.free(pathPtr);
     }
   }
-
   int setEqBand(Pointer<Void> h, int band, double gainDb) =>
       _setEqBand(h, band, gainDb);
 
@@ -784,6 +808,34 @@ class Tunes4rFFI {
       return s.isEmpty ? null : s;
     } finally {
       calloc.free(pathPtr);
+    }
+  }
+
+  /// Decode [input] to a 16 kHz mono WAV at [output] for on-device speech
+  /// recognition.
+  ///
+  /// Returns the raw JSON from the native side (`{"duration_ms":N}` or
+  /// `{"error":"..."}`), or null when the symbol is missing. The caller owns
+  /// the output file.
+  String? decodeAsrWav(String input, String output, {int maxSeconds = 0}) {
+    final fn = _decodeAsrWav;
+    if (fn == null) return null;
+    final free = _youtubeFreeString;
+    final inputPtr = input.toNativeUtf8();
+    final outputPtr = output.toNativeUtf8();
+    try {
+      final resultPtr = fn(inputPtr, outputPtr, maxSeconds);
+      if (resultPtr == nullptr) return null;
+      final s = resultPtr.toDartString();
+      if (free != null) {
+        free.call(resultPtr);
+      } else {
+        calloc.free(resultPtr);
+      }
+      return s.isEmpty ? null : s;
+    } finally {
+      calloc.free(inputPtr);
+      calloc.free(outputPtr);
     }
   }
 

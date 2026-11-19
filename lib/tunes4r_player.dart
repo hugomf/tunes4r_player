@@ -25,3 +25,5 @@ export 'src/models.dart'
         Tunes4rErrorCode;
 export 'src/audio_engine.dart' show AudioEngine, SeekStatus;
 export 'src/file_fingerprinter.dart' show AudioFingerprint, fingerprintAudioFile;
+export 'src/audio_decode.dart'
+    show AsrAudio, AsrAudioException, extractAsrAudio, deleteAsrAudio;

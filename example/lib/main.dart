@@ -41,7 +41,6 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp>
 
   // ── Engine state ─────────────────────────────────────────────────────
   PlaybackState _currentState = PlaybackState.stopped;
-  int _positionMs = 0;
   int _durationMs = 0;
   bool _canSeek = false;
 
@@ -113,7 +112,6 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp>
       _positionSub = _engine!.positionStream.listen((p) {
         if (!mounted) return;
         setState(() {
-          _positionMs = p.currentMs;
           _durationMs = p.totalMs;
           _canSeek = _engine?.canSeek ?? false;
         });
@@ -142,6 +140,9 @@ class _Tunes4rPlayerExampleAppState extends State<Tunes4rPlayerExampleApp>
             break;
           case EngineEventType.loadFailed:
             setState(() => _lastSeekEvent = 'Load failed');
+            break;
+          case EngineEventType.seekFailed:
+            setState(() => _lastSeekEvent = 'Seek failed');
             break;
           case EngineEventType.positionUpdate:
           case EngineEventType.positionReset:
